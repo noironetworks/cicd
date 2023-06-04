@@ -4,7 +4,7 @@ set -x
 git show --summary
 
 if [[ "${TRAVIS_TAG}" != "${EXPECTED_TAG_PREFIX}"* ]] ; then
-    echo "The applied git tag " ${TRAVIS_TAG} " did not match the expected tag prefix " ${EXPECTED_TAG_PREFIX} ". Skipping building images."
+    echo "The applied git tag " ${TRAVIS_TAG} " did not match the expected tag prefix " ${EXPECTED_TAG_PREFIX} ". Skipping building."
     exit 140
 fi
 
