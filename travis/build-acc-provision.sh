@@ -13,8 +13,8 @@ pushd provision
 VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}
 sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
-UPSTREAM_GIT_TAG=${VERSION}.${UPSTREAM_SHA}
-sed -i "s/${UPSTREAM_GIT_TAG}/${TRAVIS_TAG}/g" acc_provision/versions.yaml
+#UPSTREAM_GIT_TAG=${VERSION}.${UPSTREAM_SHA}
+sed -i "s/${VERSION}/${TRAVIS_TAG}/g" acc_provision/versions.yaml
 popd
 
 #python3 setup.py --description
