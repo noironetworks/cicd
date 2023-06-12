@@ -5,9 +5,9 @@ source "$SCRIPTS_DIR/globals.sh"
 
 TEST_PYPI_RELEASE_HINT="release to test.pypi.org"
 PYPI_RELEASE_HINT="release to pypi.org"
-TEST_PYPI_RELEASE=$(git show -s --format=%B  ${TRAVIS_TAG} | grep -i ${TEST_PYPI_RELEASE_HINT})
-PYPI_RELEASE=$(git show -s --format=%B  ${TRAVIS_TAG} | grep -i ${PYPI_RELEASE_HINT})
-if [ (-z ${TEST_PYPI_RELEASE+x}) && (-z ${PYPI_RELEASE+x}) ] ; then
+TEST_PYPI_RELEASE=$(git show -s --format=%B  ${TRAVIS_TAG} | grep -i "${TEST_PYPI_RELEASE_HINT}")
+PYPI_RELEASE=$(git show -s --format=%B  ${TRAVIS_TAG} | grep -i "${PYPI_RELEASE_HINT}")
+if [[ (-z ${TEST_PYPI_RELEASE+x}) && (-z ${PYPI_RELEASE+x}) ]] ; then
     echo "To push to pypi, include ${TEST_PYPI_RELEASE_HINT} or ${PYPI_RELEASE_HINT} in git tag message, exiting"
     exit 0
 fi

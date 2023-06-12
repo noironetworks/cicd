@@ -1,4 +1,7 @@
 #!/bin/bash
+set -x
+SCRIPTS_DIR=$(dirname ${BASH_SOURCE[0]})
+source "$SCRIPTS_DIR/globals.sh"
 
 #ACI_CONTAINERS_DIR=/tmp/aci-containers
 #export ACI_CONTAINERS_DIR
@@ -13,8 +16,44 @@ pushd provision
 VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}
 sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
-#UPSTREAM_GIT_TAG=${VERSION}.${UPSTREAM_SHA}
-sed -i "s/${VERSION}/${TRAVIS_TAG}/g" acc_provision/versions.yaml
+
+export UPSTREAM_IMAGE_Z_TAG
+
+ACC_PROVISION_OPERATOR_VERSION="acc_provision_operator_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/acc-provision-operator/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_ACC_PROVISION_OPERATOR_VERSION="acc_provision_operator_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${ACC_PROVISION_OPERATOR_VERSION}/${NEW_ACC_PROVISION_OPERATOR_VERSION}/" acc_provision/versions.yaml
+
+ACI_CONTAINERS_CONTROLLER_VERSION="aci_containers_controller_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/aci-containers-controller/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_ACI_CONTAINERS_CONTROLLER_VERSION="aci_containers_controller_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${ACI_CONTAINERS_CONTROLLER_VERSION}/${NEW_ACI_CONTAINERS_CONTROLLER_VERSION}/" acc_provision/versions.yaml
+
+ACI_CONTAINERS_HOST_VERSION="aci_containers_host_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/aci-containers-host/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_ACI_CONTAINERS_HOST_VERSION="aci_containers_host_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${ACI_CONTAINERS_HOST_VERSION}/${NEW_ACI_CONTAINERS_HOST_VERSION}/" acc_provision/versions.yaml
+
+ACI_CONTAINERS_OPERATOR_VERSION="aci_containers_operator_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/aci-containers-operator/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_ACI_CONTAINERS_OPERATOR_VERSION="aci_containers_operator_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${ACI_CONTAINERS_OPERATOR_VERSION}/${NEW_ACI_CONTAINERS_OPERATOR_VERSION}/" acc_provision/versions.yaml
+
+CNIDEPLOY_VERSION="cnideploy_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/cnideploy/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_CNIDEPLOY_VERSION="cnideploy_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${CNIDEPLOY_VERSION}/${NEW_CNIDEPLOY_VERSION}/" acc_provision/versions.yaml
+
+OPENVSWITCH_VERSION="openvswitch_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/openvswitch/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_OPENVSWITCH_VERSION="openvswitch_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${OPENVSWITCH_VERSION}/${NEW_OPENVSWITCH_VERSION}/" acc_provision/versions.yaml
+
+OPFLEX_AGENT_VERSION="opflex_agent_version: "${UPSTREAM_IMAGE_TAG}
+OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/opflex/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
+NEW_OPFLEX_AGENT_VERSION="opflex_agent_version: "${OTHER_TAG_FOR_Z_TAG}
+sed -i "s/${OPFLEX_AGENT_VERSION}/${NEW_OPFLEX_AGENT_VERSION}/" acc_provision/versions.yaml
+
 popd
 
 #python3 setup.py --description
