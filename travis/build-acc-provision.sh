@@ -16,6 +16,11 @@ pushd provision
 VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}
 sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
+if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
+    sed -i "s/${UPSTREAM_IMAGE_TAG}/${TRAVIS_TAG}/g" acc_provision/versions.yaml
+    cat acc_provision/versions.yaml | grep ${RELEASE_TAG}
+    exit 0
+fi
 
 export UPSTREAM_IMAGE_Z_TAG
 
@@ -53,6 +58,8 @@ OPFLEX_AGENT_VERSION="opflex_agent_version: "${UPSTREAM_IMAGE_TAG}
 OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/opflex/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
 NEW_OPFLEX_AGENT_VERSION="opflex_agent_version: "${OTHER_TAG_FOR_Z_TAG}
 sed -i "s/${OPFLEX_AGENT_VERSION}/${NEW_OPFLEX_AGENT_VERSION}/" acc_provision/versions.yaml
+
+cat acc_provision/versions.yaml | grep ${RELEASE_TAG}
 
 popd
 
