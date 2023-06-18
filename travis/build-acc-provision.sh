@@ -17,7 +17,9 @@ VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}
 sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
 if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
-    sed -i "s/${UPSTREAM_IMAGE_TAG}/${TRAVIS_TAG}/g" acc_provision/versions.yaml
+    RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
+    OVERRIDE_TAG=${UPSTREAM_IMAGE_TAG}.rc${RC_NUM}
+    sed -i "s/${UPSTREAM_IMAGE_TAG}/${OVERRIDE_TAG}/g" acc_provision/versions.yaml
     cat acc_provision/versions.yaml | grep ${RELEASE_TAG}
     exit 0
 fi
