@@ -16,6 +16,11 @@ pushd provision
 VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}
 sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
+if [[ "$TRAVIS_TAG" = "$RELEASE_TAG" ]]; then
+    echo "Travis tag matches release tag ${RELEASE_TAG}, preserving image tags in versions.yaml"
+    cat acc_provision/versions.yaml | grep ${RELEASE_TAG}
+    exit 0
+fi
 if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
     RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
     OVERRIDE_TAG=${UPSTREAM_IMAGE_TAG}.rc${RC_NUM}
