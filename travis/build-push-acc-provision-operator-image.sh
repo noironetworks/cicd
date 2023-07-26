@@ -14,3 +14,5 @@ docker build -t ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG} --file=Docke
 docker images
 
 $SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS}
+IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
+$SCRIPTS_DIR/push-to-cicd-status.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA}
