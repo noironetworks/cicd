@@ -14,15 +14,15 @@ BUILT_IMAGE=${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /tmp
 curl -sSfL https://raw.githubusercontent.com/docker/sbom-cli-plugin/main/install.sh | sh -s --
 
-docker sbom --format spdx-json ${BUILT_IMAGE} | /tmp/grype
-docker sbom ${BUILT_IMAGE}
+docker sbom --format spdx-json ${BUILT_IMAGE} | /tmp/grype | tee /tmp/cve.txt
+docker sbom ${BUILT_IMAGE} | tee /tmp/sbom.txt
 
 docker login -u=$QUAY_TRAVIS_NOIROLABS_ROBO_USER -p=$QUAY_TRAVIS_NOIROLABS_ROBO_PSWD quay.io
 docker push ${BUILT_IMAGE}
 
 for OTHER_TAG in ${OTHER_IMAGE_TAGS}; do
-  docker tag ${BUILT_IMAGE} ${QUAY_REGISTRY}/${IMAGE}:${OTHER_TAG}
-  docker push ${QUAY_REGISTRY}/${IMAGE}:${OTHER_TAG}
+ docker tag ${BUILT_IMAGE} ${QUAY_REGISTRY}/${IMAGE}:${OTHER_TAG}
+ docker push ${QUAY_REGISTRY}/${IMAGE}:${OTHER_TAG}
 done
 
 docker login -u=$QUAY_TRAVIS_NOIRO_ROBO_USER -p=$QUAY_TRAVIS_NOIRO_ROBO_PSWD quay.io
