@@ -23,15 +23,13 @@ if [ -n "$PYPI_RELEASE" ] && [ -z "$SIGNED_RELEASE" ] ; then
     exit 1
 fi
 
-
-cd provision
+pushd provision
 python setup.py --description
 
 WHEEL_NAME="acc_provision-${TRAVIS_TAG}.tar.gz"
 TAG_NAME="acc_provision-${TRAVIS_TAG}"
 DEV_WHEEL_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}.tar.gz"
 DEV_TAG_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}"
-
 
 if [ -n "$PYPI_RELEASE" ] ; then
     #twine upload --repository-url https://pypi.org/legacy/ -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
@@ -44,6 +42,7 @@ elif [ -n "$TEST_PYPI_RELEASE" ]; then
         VERSION=${TRAVIS_TAG}
         OVERRIDE_VERSION=${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}
         sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
+        sed -i "s/${UPSTREAM_IMAGE_TAG}.*$/${UPSTREAM_IMAGE_Z_TAG}/" acc_provision/versions.yaml
         python setup.py sdist
         twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
         $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${OVERRIDE_VERSION}"/#files" "${DEV_TAG_NAME}"
@@ -54,4 +53,4 @@ elif [ -n "$TEST_PYPI_RELEASE" ]; then
     fi
 fi
 
-
+popd
