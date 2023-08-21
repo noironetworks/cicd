@@ -240,7 +240,12 @@ else:
                     "acc_provision": [
                         {
                             "link": PYPI_REGISTRY,
-                            "tag": TAG_NAME
+                            "tag": TAG_NAME,
+                            "commit": [{"link": "https://github.com/" + os.environ.get(
+                                "TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"),
+                                        "sha": os.environ.get("TRAVIS_COMMIT")}],
+                            "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + "acc-provision" + "/" + RELEASE_TAG + "-" + "buildlog.txt",
+                            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
                         }
                     ]
                 }
@@ -252,7 +257,12 @@ else:
                         yaml_data["releases"][release_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
                         yaml_data["releases"][release_idx]["acc_provision"] = [{
                             "link": PYPI_REGISTRY,
-                            "tag": TAG_NAME
+                            "tag": TAG_NAME,
+                            "commit": [{"link": "https://github.com/" + os.environ.get(
+                                "TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"),
+                                        "sha": os.environ.get("TRAVIS_COMMIT")}],
+                            "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + "acc-provision" + "/" + RELEASE_TAG + "-" + "buildlog.txt",
+                            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
                         }]
 
 # Write the updated YAML data back to release.yaml

@@ -45,6 +45,13 @@ update_container_release() {
     python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}"
 }
 
+add_acc_provision_artifacts() {
+    cd /tmp/"${GIT_LOCAL_DIR}" || exit
+    git pull --rebase origin ${GIT_BRANCH}
+    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}" 2> /dev/null
+    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${TRAVIS_REPO_SLUG##*/}"/"${RELEASE_TAG}"-buildlog.txt
+}
+
 update_acc_provision_release(){
     python $SCRIPTS_DIR/update-release.py "${PYPI_REGISTRY}" "${TAG_NAME}"
 }
@@ -72,6 +79,7 @@ if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
     add_artifacts
     update_container_release
 else
+    add_acc_provision_artifacts
     update_acc_provision_release
 fi
 
