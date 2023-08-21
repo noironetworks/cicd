@@ -48,7 +48,7 @@ update_container_release() {
 add_acc_provision_artifacts() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git pull --rebase origin ${GIT_BRANCH}
-    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}" 2> /dev/null
+    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${TRAVIS_REPO_SLUG##*/}" 2> /dev/null
     curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${TRAVIS_REPO_SLUG##*/}"/"${RELEASE_TAG}"-buildlog.txt
 }
 
