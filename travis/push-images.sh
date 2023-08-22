@@ -7,6 +7,7 @@ IMAGE_BUILD_REGISTRY=$1
 IMAGE=$2
 IMAGE_BUILD_TAG=$3
 OTHER_IMAGE_TAGS=${4//,/ }
+BASE_IMAGE=$5
 OTHER_IMAGE_TAGS="${OTHER_IMAGE_TAGS} ${IMAGE_Z_TAG} kmr2-5.2.7-test"
 
 BUILT_IMAGE=${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}
@@ -16,6 +17,8 @@ curl -sSfL https://raw.githubusercontent.com/docker/sbom-cli-plugin/main/install
 
 docker sbom --format spdx-json ${BUILT_IMAGE} | /tmp/grype | tee /tmp/cve.txt
 docker sbom ${BUILT_IMAGE} | tee /tmp/sbom.txt
+
+docker sbom --format spdx-json ${BASE_IMAGE} | /tmp/grype | tee /tmp/cve-base.txt
 
 docker login -u=$QUAY_TRAVIS_NOIROLABS_ROBO_USER -p=$QUAY_TRAVIS_NOIROLABS_ROBO_PSWD quay.io
 docker push ${BUILT_IMAGE}

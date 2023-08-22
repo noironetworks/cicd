@@ -13,6 +13,11 @@ OTHER_IMAGE_TAGS="${TRAVIS_TAG_WITH_UPSTREAM_ID},${TRAVIS_TAG_WITH_UPSTREAM_ID_D
 docker build -t ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG} --file=Dockerfile .
 docker images
 
-$SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS}
+#Fetching Base Image
+BASE_IMAGE=$(grep -E '^FROM' Dockerfile | awk '{print $2}')
+docker pull ${BASE_IMAGE}
+docker images
+
+$SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${BASE_IMAGE}
 IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
-$SCRIPTS_DIR/push-to-cicd-status.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA}
+$SCRIPTS_DIR/push-to-cicd-status.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA} ${BASE_IMAGE}
