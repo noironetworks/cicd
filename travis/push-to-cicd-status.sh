@@ -12,6 +12,7 @@ if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
     IMAGE_BUILD_TAG=$3
     OTHER_IMAGE_TAGS=$4
     IMAGE_SHA=$5
+    BASE_IMAGE=$6
 else
     PYPI_REGISTRY=$1
     TAG_NAME=$2
@@ -39,10 +40,11 @@ add_artifacts() {
     curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
     cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
     cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
+    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
 }
 
 update_container_release() {
-    python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}"
+    python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
 }
 
 add_acc_provision_artifacts() {

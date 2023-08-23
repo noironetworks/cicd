@@ -21,8 +21,8 @@ def get_docker_image_sha(image_name_and_tag):
         return ""
 
 
-def count_severity():
-    filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt"
+def count_severity(filename):
+    filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + filename
     if os.path.exists(filepath):
         with open(filepath, "r") as file:
             data = file.read()
@@ -76,8 +76,8 @@ if not os.path.exists(release_filepath):
 # Check if all required command-line arguments are provided
 if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
 
-    if len(sys.argv) != 8:
-        print("Usage: python update-release.py IMAGE_BUILD_REGISTRY IMAGE IMAGE_BUILD_TAG OTHER_IMAGE_TAGS IMAGE_SHA IMAGE_Z_TAG TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER")
+    if len(sys.argv) != 9:
+        print("Usage: python update-release.py IMAGE_BUILD_REGISTRY IMAGE IMAGE_BUILD_TAG OTHER_IMAGE_TAGS IMAGE_SHA IMAGE_Z_TAG TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER BASE_IMAGE")
         sys.exit(1)
 
     # Get the command-line arguments
@@ -88,6 +88,7 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
     IMAGE_SHA = sys.argv[5]
     IMAGE_Z_TAG = sys.argv[6]
     TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER = sys.argv[7]
+    BASE_IMAGE = sys.argv[8]
 
     if os.path.exists(release_filepath):
         with open(release_filepath, "r") as file:
@@ -125,11 +126,17 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                  "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
                                           "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                             ],
+                            "base-image": [
+                                {"sha": get_docker_image_sha(BASE_IMAGE),
+                                 "cve": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                 "severity": count_severity("cve-base.txt")
+                                },
+                            ],
                             "sbom": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
                             "cve": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
                             "build-logs": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
                             "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                            "severity": count_severity()
+                            "severity": count_severity("cve.txt")
                         }
                     ]
                 }
@@ -167,11 +174,17 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                                      "/images/sha256-" + get_docker_image_sha(
                                                  "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                                         ],
+                                        "base-image": [
+                                            {"sha": get_docker_image_sha(BASE_IMAGE),
+                                             "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                             "severity": count_severity("cve-base.txt")
+                                             },
+                                        ],
                                         "sbom": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
                                         "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
                                         "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
                                         "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                                        "severity": count_severity()
+                                        "severity": count_severity("cve.txt")
                                 }
 
                                 break
@@ -198,11 +211,17 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                              "/images/sha256-" + get_docker_image_sha(
                                          "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                                 ],
+                                "base-image": [
+                                    {"sha": get_docker_image_sha(BASE_IMAGE),
+                                     "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                     "severity": count_severity("cve-base.txt")
+                                     },
+                                ],
                                 "sbom": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
                                 "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
                                 "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
                                 "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                                "severity": count_severity()
+                                "severity": count_severity("cve.txt")
                             }
 
                             yaml_data["releases"][release_idx]["container_images"].append(new_image)
