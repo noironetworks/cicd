@@ -7,12 +7,11 @@ source "$SCRIPTS_DIR/globals.sh"
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 
 if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-    IMAGE_BUILD_REGISTRY=$1
-    IMAGE=$2
-    IMAGE_BUILD_TAG=$3
-    OTHER_IMAGE_TAGS=$4
-    IMAGE_SHA=$5
-    BASE_IMAGE=$6
+    IMAGE=$1
+    IMAGE_BUILD_TAG=$2
+    OTHER_IMAGE_TAGS=$3
+    IMAGE_SHA=$4
+    BASE_IMAGE=$5
 else
     PYPI_REGISTRY=$1
     TAG_NAME=$2
@@ -44,7 +43,7 @@ add_artifacts() {
 }
 
 update_container_release() {
-    python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
+    python $SCRIPTS_DIR/update-release.py "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
 }
 
 add_acc_provision_artifacts() {

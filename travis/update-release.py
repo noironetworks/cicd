@@ -76,19 +76,22 @@ if not os.path.exists(release_filepath):
 # Check if all required command-line arguments are provided
 if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
 
-    if len(sys.argv) != 9:
-        print("Usage: python update-release.py IMAGE_BUILD_REGISTRY IMAGE IMAGE_BUILD_TAG OTHER_IMAGE_TAGS IMAGE_SHA IMAGE_Z_TAG TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER BASE_IMAGE")
+    if len(sys.argv) != 8:
+        print("Usage: python update-release.py IMAGE IMAGE_BUILD_TAG OTHER_IMAGE_TAGS IMAGE_SHA IMAGE_Z_TAG TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER BASE_IMAGE")
         sys.exit(1)
 
     # Get the command-line arguments
-    IMAGE_BUILD_REGISTRY = sys.argv[1]
-    IMAGE = sys.argv[2]
-    IMAGE_BUILD_TAG = sys.argv[3]
-    OTHER_IMAGE_TAGS = sys.argv[4]
-    IMAGE_SHA = sys.argv[5]
-    IMAGE_Z_TAG = sys.argv[6]
-    TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER = sys.argv[7]
-    BASE_IMAGE = sys.argv[8]
+    IMAGE = sys.argv[1]
+    IMAGE_BUILD_TAG = sys.argv[2]
+    OTHER_IMAGE_TAGS = sys.argv[3]
+    IMAGE_SHA = sys.argv[4]
+    IMAGE_Z_TAG = sys.argv[5]
+    TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER = sys.argv[6]
+    BASE_IMAGE = sys.argv[7]
+
+    #Get Environment Vars
+    QUAY_NOIRO_REGISTRY = os.environ.get("QUAY_NOIRO_REGISTRY")
+
 
     if os.path.exists(release_filepath):
         with open(release_filepath, "r") as file:
@@ -115,9 +118,9 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                             "commit": [{"link": "https://github.com/"+ os.environ.get("TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"), "sha":os.environ.get("TRAVIS_COMMIT")}],
                             "quay": [
                                 {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                 "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                 "link": "https://" + QUAY_NOIRO_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                 {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                 "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                 "link": "https://" + QUAY_NOIRO_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                             ],
                             "docker": [
                                 {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,  "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
@@ -160,9 +163,9 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                                     "sha": os.environ.get("TRAVIS_COMMIT")}],
                                         "quay": [
                                             {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                             "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                             "link": "https://" + QUAY_NOIRO_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                             {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                             "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                             "link": "https://" + QUAY_NOIRO_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                                         ],
                                         "docker": [
                                             {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
@@ -197,9 +200,9 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                 "commit": [{"link": "https://github.com/"+ os.environ.get("TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"), "sha":os.environ.get("TRAVIS_COMMIT")}],
                                 "quay": [
                                     {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                     "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                     "link": "https://" + QUAY_NOIRO_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                     {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                     "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                     "link": "https://" + QUAY_NOIRO_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                                 ],
                                 "docker": [
                                     {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,

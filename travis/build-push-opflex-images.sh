@@ -24,4 +24,4 @@ for IMAGE in ${ALL_IMAGES}; do
 done
 
 IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
-$SCRIPTS_DIR/push-to-cicd-status.sh ${IMAGE_BUILD_REGISTRY} opflex ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA} ${BASE_IMAGE}
+$SCRIPTS_DIR/push-to-cicd-status.sh opflex ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA} ${BASE_IMAGE}
