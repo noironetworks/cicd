@@ -33,6 +33,11 @@ def count_severity(filename):
 
         # Loop through each line (ignoring the first line) and extract the SEVERITY value
         for line in lines[1:]:
+
+            # If the line contains "(won't fix)", ignore it
+            if "(won't fix)" in line:
+                continue
+            
             columns = line.split()
             severity = columns[-1]
             severity_list.append(severity)
