@@ -30,12 +30,16 @@ WHEEL_NAME="acc_provision-${TRAVIS_TAG}.tar.gz"
 TAG_NAME="acc_provision-${TRAVIS_TAG}"
 DEV_WHEEL_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}.tar.gz"
 DEV_TAG_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}"
+TWINE_UPLOAD="true"
 
 if [ -n "$PYPI_RELEASE" ] ; then
     #twine upload --repository-url https://pypi.org/legacy/ -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
     python setup.py sdist
     twine upload -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
-    $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}"
+    if [ $? -ne 0 ]; then
+        TWINE_UPLOAD="false"
+    fi
+    $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "true" ${TWINE_UPLOAD}
 elif [ -n "$TEST_PYPI_RELEASE" ]; then
     if [ "$TRAVIS_BUILD_USER" == "noiro-tagger" ]; then
         #twine upload --repository-url https://test.pypi.org/legacy/ -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
@@ -45,11 +49,17 @@ elif [ -n "$TEST_PYPI_RELEASE" ]; then
         sed -i "s/${UPSTREAM_IMAGE_TAG}.*$/${UPSTREAM_IMAGE_Z_TAG}/" acc_provision/versions.yaml
         python setup.py sdist
         twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
-        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${OVERRIDE_VERSION}"/#files" "${DEV_TAG_NAME}"
+        if [ $? -ne 0 ]; then
+            TWINE_UPLOAD="false"
+        fi
+        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${OVERRIDE_VERSION}"/#files" "${DEV_TAG_NAME}" "false" ${TWINE_UPLOAD}
     elif [ -n "$SIGNED_EMAIL" ]; then
         python setup.py sdist
         twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$WHEEL_NAME
-        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}"
+        if [ $? -ne 0 ]; then
+            TWINE_UPLOAD="false"
+        fi
+        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "false" ${TWINE_UPLOAD}
     fi
 fi
 

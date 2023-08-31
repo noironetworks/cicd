@@ -3,68 +3,149 @@ import os
 import sys
 import yaml
 import pytz
+import shutil
 import subprocess
+import re
 
-
-def get_docker_image_sha(image_name_and_tag):
+def pull_image_and_get_sha(image_name_and_tag):
     try:
-        # Run the 'docker image inspect' command as a subprocess
+        subprocess.check_output(['docker', 'pull', image_name_and_tag], universal_newlines=True)      
+    except subprocess.CalledProcessError as e:
+        print("Error:", e)
+        return "error"
+    return get_image_sha(image_name_and_tag)
+
+def get_image_sha(image_name_and_tag):
+    try:
         result = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{index (split (index .RepoDigests 0) "@sha256:") 1}}', image_name_and_tag], universal_newlines=True)
-
-        # 'result' now contains the output of the command, which includes the SHA digest
-        sha_digest = result.strip()  # Remove any leading/trailing whitespaces or newlines
-
-        return sha_digest
     except subprocess.CalledProcessError as e:
         # Handle any errors that occur during the subprocess execution
         print("Error:", e)
-        return ""
+        return "error"
+    return result.strip()
 
+def count_severity(filepath):
+    filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/" + filepath
+    
+    severity_list = []
 
-def count_severity(filename):
-    filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + filename
     if os.path.exists(filepath):
         with open(filepath, "r") as file:
             data = file.read()
 
         lines = data.strip().split('\n')
 
-        severity_list = []
+        
 
-        # Loop through each line (ignoring the first line) and extract the SEVERITY value
-        for line in lines[1:]:
-            columns = line.split()
-            severity = columns[-1]
-            severity_list.append(severity)
+        # Accepted severity values
+        accepted_severities = ["Critical", "High", "Medium", "Low", "Unknown"]
 
-        # Count occurrences of "Citical", "High", "Medium, "Low", "Unknown"
-        critical_count = severity_list.count("Critical")
-        high_count = severity_list.count("High")
-        medium_count = severity_list.count("Medium")
-        low_count = severity_list.count("Low")
-        unknown_count = severity_list.count("Unknown")
+        try:
+            # Loop through each line (ignoring the first line) and extract the SEVERITY value
+            for line in lines[1:]:
+                columns = line.split()
+                severity = columns[-1]
 
-        result = [
-            {
-                "C": critical_count,
-                "H": high_count,
-                "M": medium_count,
-                "L": low_count,
-                "U": unknown_count
-            }
-        ]
-        # Return the results
-        return result
+                if severity not in accepted_severities:
+                    print(f"Unexpected severity value found: {severity}")
+                    break
 
-    return []
+                severity_list.append(severity)
+
+        except IndexError:
+            print(f"IndexError encountered for line: {line}")
+    
+    if len(severity_list) == 0:
+        return []
+    
+    result = [
+        {
+            "C": severity_list.count("Critical"),
+            "H": severity_list.count("High"),
+            "M": severity_list.count("Medium"),
+            "L": severity_list.count("Low"),
+            "U": severity_list.count("Unknown")
+        }
+    ]
+    # Return the results
+    return result
 
 
+def copyfile(src, dst):
+    # Check if dst exists, if not, create it
+    if not os.path.exists(dst):
+        os.makedirs(dst)
+
+    for item in os.listdir(src):
+        s = os.path.join(src, item)
+        d = os.path.join(dst, item)
+        if os.path.isdir(s):
+            shutil.copytree(s, d, False, None)
+        else:
+            shutil.copy2(s, d)
+
+def get_container_images_data(r_stream, tag):
+    for r in r_stream:
+        if r["release_name"].endswith(".z"):
+            z_container_images = r["container_images"]
+    c_imagges = []
+    for image in z_container_images:
+        # lookup image sha's
+        quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
+        # lookup image sha
+        dockerSha = pull_image_and_get_sha("noiro/" + image["name"] + ":" + tag)
+        copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"], "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+        image_update = {
+            "name": image["name"],
+            "commit": image["commit"],
+            "quay": [
+                {
+                "tag": tag,
+                "sha": quaySha,
+                "link": "https://quay.io/noirolabs/" + image["name"] + ":" + tag
+                },
+            ],
+            "docker": [
+                {
+                "tag": tag,
+                "sha": dockerSha,
+                "link": "https://hub.docker.com/layers/noiro/" + image["name"] + "/" + tag + "/images/sha256-" + dockerSha + "?context=explore"
+                },
+            ],
+            "base-image": [
+                {
+                "sha": image["base-image"][0]["sha"],
+                "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt")
+                },
+            ],
+            "sbom": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "sbom.txt",
+            "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt",
+            "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "buildlog.txt",
+            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt")
+        }
+        c_imagges.append(image_update)
+    return c_imagges
+
+# Constants
 GIT_LOCAL_DIR = "cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
-
+Z_RELEASE_TAG = RELEASE_TAG + ".z"
+TRAVIS_TAG= os.environ.get("TRAVIS_TAG")
+TRAVIS_TAG_WITH_UPSTREAM_ID = TRAVIS_TAG + "." + os.environ.get("UPSTREAM_ID")
+RC_REGEX = RELEASE_TAG + "rc" + r"[0-9]+"
+IS_RC_RELEASE = bool(re.match(RC_REGEX, TRAVIS_TAG))
+RC_NUM = TRAVIS_TAG.replace(RELEASE_TAG + "rc", "", 1)
+RC_RELEASE_TAG = RELEASE_TAG + ".rc" + RC_NUM
+RC_IMAGE_TAG = RELEASE_TAG + "." + os.environ.get("UPSTREAM_ID") + ".rc" + RC_NUM
+DIR = "/z/"
+if IS_RC_RELEASE:
+    DIR = "/rc" + RC_NUM + "/"
 release_filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/releases.yaml"
 
-release_name_exists = False
+release_tag_exists = False
+yaml_data = None
 
 # Get the timezone for Pacific Time
 pacific_time = pytz.timezone('US/Pacific')
@@ -73,216 +154,161 @@ if not os.path.exists(release_filepath):
     with open(release_filepath, 'w'):
         pass
 
-# Check if all required command-line arguments are provided
-if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
-
-    if len(sys.argv) != 9:
-        print("Usage: python update-release.py IMAGE_BUILD_REGISTRY IMAGE IMAGE_BUILD_TAG OTHER_IMAGE_TAGS IMAGE_SHA IMAGE_Z_TAG TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER BASE_IMAGE")
+with open(release_filepath, "r") as file:
+    try:
+        yaml_data = yaml.safe_load(file)
+    except yaml.YAMLError as exc:
+        print(exc)
         sys.exit(1)
 
-    # Get the command-line arguments
-    IMAGE_BUILD_REGISTRY = sys.argv[1]
-    IMAGE = sys.argv[2]
-    IMAGE_BUILD_TAG = sys.argv[3]
-    OTHER_IMAGE_TAGS = sys.argv[4]
-    IMAGE_SHA = sys.argv[5]
-    IMAGE_Z_TAG = sys.argv[6]
-    TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER = sys.argv[7]
-    BASE_IMAGE = sys.argv[8]
+    # Check if yaml_data is not None before accessing its keys
+    if yaml_data is None:
+        yaml_data = {"releases": []}
 
-    if os.path.exists(release_filepath):
-        with open(release_filepath, "r") as file:
-            yaml_data = yaml.safe_load(file)
-            # Check if yaml_data is not None before accessing its keys
-            if yaml_data is None:
-                yaml_data = {"releases": []}
+    if "releases" not in yaml_data:
+        yaml_data["releases"] = []
 
-            if "releases" not in yaml_data:
-                yaml_data["releases"] = []
+for release in yaml_data["releases"]:
+    if release.get("release_tag") == RELEASE_TAG:
+        release_tag_exists = True
+        break      
 
-            for release in yaml_data["releases"]:
-                if release.get("release_name") == RELEASE_TAG:
-                    release_name_exists = True
-                    break
-            if not release_name_exists:
-
-                new_release_data = {
+if not release_tag_exists:
+    new_release_tag = {
+            "release_tag": RELEASE_TAG,
+            "release_streams": [
+                {
+                    "release_name": Z_RELEASE_TAG,
+                    "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "container_images": [],
+                    "acc_provision": []
+                },
+                {
                     "release_name": RELEASE_TAG,
                     "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                    "container_images": [
-                        {
-                            "name": IMAGE,
-                            "commit": [{"link": "https://github.com/"+ os.environ.get("TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"), "sha":os.environ.get("TRAVIS_COMMIT")}],
-                            "quay": [
-                                {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                 "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
-                                {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                 "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
-                            ],
-                            "docker": [
-                                {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,  "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
-                                          "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+IMAGE_Z_TAG) + "?context=explore"},
-                                {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                 "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
-                                          "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
-                            ],
-                            "base-image": [
-                                {"sha": get_docker_image_sha(BASE_IMAGE),
-                                 "cve": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                                 "severity": count_severity("cve-base.txt")
-                                },
-                            ],
-                            "sbom": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
-                            "cve": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
-                            "build-logs": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-                            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                            "severity": count_severity("cve.txt")
-                        }
-                    ]
+                    "container_images": [],
+                    "acc_provision": [],
+                    "released": False
                 }
+            ]
+        }
+    yaml_data["releases"].append(new_release_tag)
 
-                yaml_data["releases"].append(new_release_data)
+for release_idx, release in enumerate(yaml_data["releases"]):
+    if release["release_tag"] == RELEASE_TAG:
+        # Check if all required command-line arguments are provided
+        if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
 
-            else:
+            if len(sys.argv) != 9:
+                print("Usage: python update-release.py IMAGE_BUILD_REGISTRY IMAGE IMAGE_BUILD_TAG OTHER_IMAGE_TAGS IMAGE_SHA IMAGE_Z_TAG TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER BASE_IMAGE")
+                sys.exit(1)
 
-                for release_idx, release in enumerate(yaml_data["releases"]):
-                    if release.get("release_name") == RELEASE_TAG:
-                        yaml_data["releases"][release_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
-                        release_image_exists = False
-                        for idx, image in enumerate(yaml_data["releases"][release_idx]["container_images"]):
-                            if image.get("name") == IMAGE:
-                                release_image_exists = True
-                                print("release image exists", release_image_exists)
-                                yaml_data["releases"][release_idx]["container_images"][idx] = {
-                                        "name": IMAGE,
-                                        "commit": [{"link": "https://github.com/" + os.environ.get(
-                                            "TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"),
-                                                    "sha": os.environ.get("TRAVIS_COMMIT")}],
-                                        "quay": [
-                                            {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                             "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
-                                            {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                             "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
-                                        ],
-                                        "docker": [
-                                            {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                             "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
-                                                     "/images/sha256-" + get_docker_image_sha(
-                                                 "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
-                                            {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                             "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
-                                                     "/images/sha256-" + get_docker_image_sha(
-                                                 "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
-                                        ],
-                                        "base-image": [
-                                            {"sha": get_docker_image_sha(BASE_IMAGE),
-                                             "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                                             "severity": count_severity("cve-base.txt")
-                                             },
-                                        ],
-                                        "sbom": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
-                                        "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
-                                        "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-                                        "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                                        "severity": count_severity("cve.txt")
-                                }
+            # Get the command-line arguments
+            IMAGE_BUILD_REGISTRY = sys.argv[1]
+            IMAGE = sys.argv[2]
+            IMAGE_BUILD_TAG = sys.argv[3]
+            OTHER_IMAGE_TAGS = sys.argv[4]
+            IMAGE_SHA = sys.argv[5]
+            IMAGE_Z_TAG = sys.argv[6]
+            TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER = sys.argv[7]
+            BASE_IMAGE = sys.argv[8]
 
-                                break
-
-
-                        if not release_image_exists:
-                            print("release image not exists", release_image_exists)
-                            new_image = {
+            image_update = {
                                 "name": IMAGE,
                                 "commit": [{"link": "https://github.com/"+ os.environ.get("TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"), "sha":os.environ.get("TRAVIS_COMMIT")}],
                                 "quay": [
                                     {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                     "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                    "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                     {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                     "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                    "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                                 ],
                                 "docker": [
                                     {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                     "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
-                                             "/images/sha256-" + get_docker_image_sha(
-                                         "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
+                                    "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
+                                            "/images/sha256-" + get_image_sha(
+                                        "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
                                     {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                     "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
-                                             "/images/sha256-" + get_docker_image_sha(
-                                         "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
+                                    "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
+                                            "/images/sha256-" + get_image_sha(
+                                        "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                                 ],
                                 "base-image": [
-                                    {"sha": get_docker_image_sha(BASE_IMAGE),
-                                     "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                                     "severity": count_severity("cve-base.txt")
-                                     },
+                                    {"sha": get_image_sha(BASE_IMAGE),
+                                    "cve": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                    "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt")
+                                    },
                                 ],
-                                "sbom": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
-                                "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
-                                "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
+                                "sbom": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
+                                "cve": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
+                                "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
                                 "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                                "severity": count_severity("cve.txt")
+                                "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt")
                             }
 
-                            yaml_data["releases"][release_idx]["container_images"].append(new_image)
-
-                        break
-
-
-else:
-    if len(sys.argv) != 3:
-        print("Usage: python update-release.py PYPI_REGISTRY TAG_NAME")
-        sys.exit(1)
-
-    PYPI_REGISTRY = sys.argv[1]
-    TAG_NAME = sys.argv[2]
-
-    if os.path.exists(release_filepath):
-        with open(release_filepath, "r") as file:
-            yaml_data = yaml.safe_load(file)
-
-            if yaml_data is None:
-                yaml_data = {"releases": []}
+            for release_stream_idx, release_stream in enumerate(release["release_streams"]):
                 
-            if "releases" not in yaml_data:
-                yaml_data["releases"] = []
+                if release_stream["release_name"] == Z_RELEASE_TAG:
+                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
+                    if len(yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"]) == 0:
+                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"].append(image_update)
+                    else:
+                        image_exists = False
+                        for image_idx, image in enumerate(release_stream["container_images"]):
+                            if image["name"] == IMAGE:
+                                image_exists = True
+                                yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"][image_idx] = image_update
+                                break
+                        if not image_exists:
+                            yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"].append(image_update)
+        # acc-provision
+        else:
+            if len(sys.argv) != 4:
+                print("Usage: python update-release.py PYPI_REGISTRY TAG_NAME IS_RELEASE")
+                sys.exit(1)
 
-            for release in yaml_data["releases"]:
-                if release.get("release_name") == RELEASE_TAG:
-                    release_name_exists = True
-                    break
-
-            if not release_name_exists:
-                new_release_data = {
-                    "release_name": RELEASE_TAG,
-                    "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                    "acc_provision": [
+            PYPI_REGISTRY = sys.argv[1]
+            TAG_NAME = sys.argv[2]
+            IS_RELEASE = sys.argv[3]
+            
+            search_stream = Z_RELEASE_TAG
+            if IS_RELEASE == "true":
+                search_stream = RELEASE_TAG
+                DIR = "/r/"
+            elif IS_RC_RELEASE:
+                search_stream = RC_RELEASE_TAG
+                RC_RELEASE_EXISTS = False
+                for release_stream in release["release_streams"]:
+                    if release_stream["release_name"] == search_stream:
+                        RC_RELEASE_EXISTS = True
+                        break
+                if not RC_RELEASE_EXISTS:
+                    release_stream = {
+                        "release_name": search_stream,
+                        "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                        "container_images": [],
+                        "acc_provision": [],
+                    }
+                    yaml_data["releases"][release_idx]["release_streams"].append(release_stream)
+            acc_provision_update = [
                         {
                             "link": PYPI_REGISTRY,
                             "tag": TAG_NAME,
                             "commit": [{"link": "https://github.com/" + os.environ.get(
                                 "TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"),
                                         "sha": os.environ.get("TRAVIS_COMMIT")}],
-                            "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + "acc-provision" + "/" + RELEASE_TAG + "-" + "buildlog.txt",
+                            "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + "acc-provision" + "/" + RELEASE_TAG + "-" + "buildlog.txt",
                             "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
                         }
                     ]
-                }
-
-                yaml_data["releases"].append(new_release_data)
-            else:
-                for release_idx, release in enumerate(yaml_data["releases"]):
-                    if release.get("release_name") == RELEASE_TAG:
-                        yaml_data["releases"][release_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
-                        yaml_data["releases"][release_idx]["acc_provision"] = [{
-                            "link": PYPI_REGISTRY,
-                            "tag": TAG_NAME,
-                            "commit": [{"link": "https://github.com/" + os.environ.get(
-                                "TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"),
-                                        "sha": os.environ.get("TRAVIS_COMMIT")}],
-                            "build-logs": "release_artifacts/" + RELEASE_TAG + "/" + "acc-provision" + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-                            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                        }]
+            for release_stream_idx, release_stream in enumerate(release["release_streams"]):
+                if release_stream["release_name"] == search_stream:
+                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
+                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["acc_provision"] = acc_provision_update
+                    if IS_RELEASE == "true":
+                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["released"] = True
+                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = get_container_images_data(release["release_streams"], TRAVIS_TAG_WITH_UPSTREAM_ID)
+                    elif IS_RC_RELEASE:
+                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = get_container_images_data(release["release_streams"], RC_IMAGE_TAG)
 
 # Write the updated YAML data back to release.yaml
 with open(release_filepath, "w") as file:
