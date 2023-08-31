@@ -43,6 +43,10 @@ add_artifacts() {
     cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
 }
 
+add_trivy_vulnerabilites() {
+    trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
+}
+
 update_container_release() {
     python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
 }
@@ -80,6 +84,7 @@ git_clone_repo
 if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
     add_artifacts
     update_container_release
+    add_trivy_vulnerabilites
 else
     add_acc_provision_artifacts
     update_acc_provision_release
