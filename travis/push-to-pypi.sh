@@ -35,7 +35,7 @@ if [ -n "$PYPI_RELEASE" ] ; then
     #twine upload --repository-url https://pypi.org/legacy/ -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
     python setup.py sdist
     twine upload -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
-    $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}"
+    $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "true"
 elif [ -n "$TEST_PYPI_RELEASE" ]; then
     if [ "$TRAVIS_BUILD_USER" == "noiro-tagger" ]; then
         #twine upload --repository-url https://test.pypi.org/legacy/ -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME

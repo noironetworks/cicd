@@ -61,6 +61,8 @@ def count_severity(filename):
 
 GIT_LOCAL_DIR = "cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
+if RELEASE_TAG.endswith("rc") == False:
+        RELEASE_TAG = RELEASE_TAG +".z"
 
 release_filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/releases.yaml"
 
@@ -105,7 +107,6 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                     release_name_exists = True
                     break
             if not release_name_exists:
-
                 new_release_data = {
                     "release_name": RELEASE_TAG,
                     "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -230,12 +231,17 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
 
 
 else:
-    if len(sys.argv) != 3:
-        print("Usage: python update-release.py PYPI_REGISTRY TAG_NAME")
+    if len(sys.argv) != 4:
+        print("Usage: python update-release.py PYPI_REGISTRY TAG_NAME RELEASE")
         sys.exit(1)
 
     PYPI_REGISTRY = sys.argv[1]
     TAG_NAME = sys.argv[2]
+    RELEASE = sys.argv[3]
+    
+    if RELEASE == "True":
+        # remove .z from RELEASE_TAG
+        RELEASE_TAG = RELEASE_TAG[:-2]
 
     if os.path.exists(release_filepath):
         with open(release_filepath, "r") as file:
@@ -267,6 +273,7 @@ else:
                             "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
                         }
                     ]
+
                 }
 
                 yaml_data["releases"].append(new_release_data)
