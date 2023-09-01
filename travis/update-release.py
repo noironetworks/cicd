@@ -59,6 +59,40 @@ def count_severity(filename):
     return []
 
 
+def get_container_images_data(yaml_data):
+    # Check if yaml_data is not None before accessing its keys
+    #names = [ "acc-provision-operator","aci-containers-host","aci-containers-controller","cnideploy","aci-containers-operator","openvswitch","opflex"]
+    RELEASE_TAG = os.environ.get("RELEASE_TAG")
+    for release_idx, release in enumerate(yaml_data["releases"]):
+        rName = release.get("release_name")
+        if rName == RELEASE_TAG[:8]+"z":
+            image_tag = RELEASE_TAG
+            container_images = yaml_data["releases"][release_idx]["container_images"]
+            images = []
+            for image_idx, image in enumerate(container_images):
+                new_image = {
+                    "name": image[image_idx]["name"],
+                    "commit": image[image_idx]["commit"],
+                    "quay": [
+                        {"tag": image_tag, "sha": image[image_idx]["quay"][0]["sha"],
+                        "link": "https://quay.io/noiro + "/" + image[image_idx]["name"] + ":" + image_tag},
+                    ],
+                    "docker": [
+                        {"tag": image_tag, "sha": image[image_idx]["docker"][0]["sha"],
+                         "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + image_tag +
+                                          "/images/sha256-" + get_docker_image_sha("noiro/"+image[image_idx]["name"]+":"+image_tag) + "?context=explore"},
+                    ],
+                    "base-image": image[image_idx]["base-image"],
+                    "sbom": image[image_idx]["sbom"],
+                    "cve": image[image_idx]["cve"],
+                    "build-logs": image[image_idx]["build-logs"],
+                    "build-time": image[image_idx]["build-time"],
+                    "severity": image[image_idx]["severity"]
+                }
+                images.append(new_image)
+            return images
+             
+
 GIT_LOCAL_DIR = "cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
 if RELEASE_TAG.endswith("rc") == False:
@@ -275,7 +309,9 @@ else:
                     ]
 
                 }
-
+                if RELEASE == "True":
+                    # call a function to write "container_images" data
+                    new_release_data["container_images"] = get_container_images_data(yaml_data)
                 yaml_data["releases"].append(new_release_data)
             else:
                 for release_idx, release in enumerate(yaml_data["releases"]):
