@@ -16,10 +16,7 @@ if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
 else
     PYPI_REGISTRY=$1
     TAG_NAME=$2
-    RELEASE="false"
-    if [ -n "$3" ]; then
-        RELEASE=$3
-    fi 
+    IS_RELEASE=$3 
 fi
 
 GIT_REPO="https://github.com/noironetworks/test-cicd-status.git"
@@ -41,10 +38,10 @@ add_artifacts() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git pull --rebase origin ${GIT_BRANCH}
     mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}" 2> /dev/null
-    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
-    cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
-    cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
-    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
+    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_Z_TAG}"-buildlog.txt
+    cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_Z_TAG}"-sbom.txt
+    cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_Z_TAG}"-cve.txt
+    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_Z_TAG}"/"${IMAGE}"/"${RELEASE_Z_TAG}"-cve-base.txt
 }
 
 add_trivy_vulnerabilites() {
@@ -62,14 +59,14 @@ add_acc_provision_artifacts() {
     curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${TRAVIS_REPO_SLUG##*/}"/"${RELEASE_TAG}"-buildlog.txt
 }
 
-update_acc_provision_release(){
-    DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}"
-    if [[ "${RELEASE_TAG}" =~ *rc ]] && [[ ${RELEASE} == "false" ]] ; then
-        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_Z_TAG}"
+update_acc_provision_release() {
+    DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/${TRAVIS_REPO_SLUG##*/}" 2> /dev/null
+    if [[ "${RELEASE_TAG}" =~ .*rc ]] && [[ "${IS_RELEASE}" == "false" ]]; then
+        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_Z_TAG}/${TRAVIS_REPO_SLUG##*/}" 2> /dev/null
     fi
     mkdir -p "${DIR}" 2> /dev/null
-    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > "${DIR}"/"${TAG_NAME}"-buildlog.txt
-    python $SCRIPTS_DIR/update-release.py "${PYPI_REGISTRY}" "${TAG_NAME}" "${RELEASE}"
+    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > "${DIR}/${TAG_NAME}-buildlog.txt"
+    python $SCRIPTS_DIR/update-release.py "${PYPI_REGISTRY}" "${TAG_NAME}" "${IS_RELEASE}"
 }
 
 git_add_commit_push() {

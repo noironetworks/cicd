@@ -59,43 +59,43 @@ def count_severity(filename):
     return []
 
 
-def get_container_images_data(yaml_data):
-    # Check if yaml_data is not None before accessing its keys
-    #names = [ "acc-provision-operator","aci-containers-host","aci-containers-controller","cnideploy","aci-containers-operator","openvswitch","opflex"]
-    RELEASE_TAG = os.environ.get("RELEASE_TAG")
-    for release_idx, release in enumerate(yaml_data["releases"]):
-        rName = release.get("release_name")
-        if rName == RELEASE_TAG[:8]+"z":
-            image_tag = RELEASE_TAG
-            container_images = yaml_data["releases"][release_idx]["container_images"]
-            images = []
-            for image_idx, image in enumerate(container_images):
-                new_image = {
-                    "name": image[image_idx]["name"],
-                    "commit": image[image_idx]["commit"],
-                    "quay": [
-                        {"tag": image_tag, "sha": image[image_idx]["quay"][0]["sha"],
-                        "link": "https://quay.io/noiro + "/" + image[image_idx]["name"] + ":" + image_tag},
-                    ],
-                    "docker": [
-                        {"tag": image_tag, "sha": image[image_idx]["docker"][0]["sha"],
-                         "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + image_tag +
-                                          "/images/sha256-" + get_docker_image_sha("noiro/"+image[image_idx]["name"]+":"+image_tag) + "?context=explore"},
-                    ],
-                    "base-image": image[image_idx]["base-image"],
-                    "sbom": image[image_idx]["sbom"],
-                    "cve": image[image_idx]["cve"],
-                    "build-logs": image[image_idx]["build-logs"],
-                    "build-time": image[image_idx]["build-time"],
-                    "severity": image[image_idx]["severity"]
-                }
-                images.append(new_image)
-            return images
+def get_container_images_data(yaml_data ,r_tag):
+    for r_idx, r in enumerate(yaml_data["releases"]):
+        release_name = r.get("release_name")
+        if release_name.endswith(".z"):
+            release_name = release_name.rstrip(".z")
+            if r_tag.startswith(release_name) and r_tag[len(release_name)] == ".":
+                image_tag = r_tag
+                container_images = yaml_data["releases"][r_idx]["container_images"]
+                images = []
+                for img in enumerate(container_images):
+                    new_img = {
+                        "name": img["name"],
+                        "commit": img["commit"],
+                        "quay": [
+                            {"tag": r_tag, "sha": img["quay"][0]["sha"],
+                            "link": "https://quay.io/noiro/" + img["name"] + ":" + image_tag},
+                        ],
+                        "docker": [
+                            {"tag": r_tag, "sha": img["docker"][0]["sha"],
+                            "link": "https://hub.docker.com/layers/noiro/" + IMAGE + "/" + image_tag +
+                                    "/images/sha256-" + get_docker_image_sha("noiro/" + img["name"] + ":" + image_tag) + "?context=explore"},
+                        ],
+                        "base-image": img["base-image"],
+                        "sbom": img["sbom"],
+                        "cve": img["cve"],
+                        "build-logs": img["build-logs"],
+                        "build-time": img["build-time"],
+                        "severity": img["severity"]
+                    }
+                    images.append(new_img)
+                return images
+
              
 
 GIT_LOCAL_DIR = "cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
-if RELEASE_TAG.endswith("rc") == False:
+if RELEASE_TAG.endswith("rc") is False:
         RELEASE_TAG = RELEASE_TAG +".z"
 
 release_filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/releases.yaml"
@@ -128,7 +128,12 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
 
     if os.path.exists(release_filepath):
         with open(release_filepath, "r") as file:
-            yaml_data = yaml.safe_load(file)
+            try:
+                yaml_data = yaml.safe_load(file)
+            except yaml.YAMLError as exc:
+                print(exc)
+                sys.exit(1)
+
             # Check if yaml_data is not None before accessing its keys
             if yaml_data is None:
                 yaml_data = {"releases": []}
@@ -150,21 +155,21 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                             "commit": [{"link": "https://github.com/"+ os.environ.get("TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"), "sha":os.environ.get("TRAVIS_COMMIT")}],
                             "quay": [
                                 {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                 "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                 {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                 "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                             ],
                             "docker": [
                                 {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,  "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
-                                          "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+IMAGE_Z_TAG) + "?context=explore"},
+                                        "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+IMAGE_Z_TAG) + "?context=explore"},
                                 {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                 "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
-                                          "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
+                                "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
+                                        "/images/sha256-" + get_docker_image_sha("noiro/"+IMAGE+":"+TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                             ],
                             "base-image": [
                                 {"sha": get_docker_image_sha(BASE_IMAGE),
-                                 "cve": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                                 "severity": count_severity("cve-base.txt")
+                                "cve": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                "severity": count_severity("cve-base.txt")
                                 },
                             ],
                             "sbom": "release_artifacts/"+ RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
@@ -195,25 +200,25 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                                     "sha": os.environ.get("TRAVIS_COMMIT")}],
                                         "quay": [
                                             {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                             "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                            "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                             {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                             "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                            "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                                         ],
                                         "docker": [
                                             {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                             "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
-                                                     "/images/sha256-" + get_docker_image_sha(
-                                                 "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
+                                            "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
+                                                    "/images/sha256-" + get_docker_image_sha(
+                                                "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
                                             {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                             "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
-                                                     "/images/sha256-" + get_docker_image_sha(
-                                                 "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
+                                            "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
+                                                    "/images/sha256-" + get_docker_image_sha(
+                                                "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                                         ],
                                         "base-image": [
                                             {"sha": get_docker_image_sha(BASE_IMAGE),
-                                             "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                                             "severity": count_severity("cve-base.txt")
-                                             },
+                                            "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                            "severity": count_severity("cve-base.txt")
+                                            },
                                         ],
                                         "sbom": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
                                         "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
@@ -232,25 +237,25 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
                                 "commit": [{"link": "https://github.com/"+ os.environ.get("TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"), "sha":os.environ.get("TRAVIS_COMMIT")}],
                                 "quay": [
                                     {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                     "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
+                                    "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + IMAGE_Z_TAG},
                                     {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                     "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
+                                    "link": "https://" + IMAGE_BUILD_REGISTRY + "/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER},
                                 ],
                                 "docker": [
                                     {"tag": IMAGE_Z_TAG, "sha": IMAGE_SHA,
-                                     "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
-                                             "/images/sha256-" + get_docker_image_sha(
-                                         "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
+                                    "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + IMAGE_Z_TAG +
+                                            "/images/sha256-" + get_docker_image_sha(
+                                        "noiro/" + IMAGE + ":" + IMAGE_Z_TAG) + "?context=explore"},
                                     {"tag": TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER, "sha": IMAGE_SHA,
-                                     "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
-                                             "/images/sha256-" + get_docker_image_sha(
-                                         "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
+                                    "link": "https://hub.docker.com/layers/noiro" + "/" + IMAGE + "/" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER +
+                                            "/images/sha256-" + get_docker_image_sha(
+                                        "noiro/" + IMAGE + ":" + TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER) + "?context=explore"},
                                 ],
                                 "base-image": [
                                     {"sha": get_docker_image_sha(BASE_IMAGE),
-                                     "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                                     "severity": count_severity("cve-base.txt")
-                                     },
+                                    "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                                    "severity": count_severity("cve-base.txt")
+                                    },
                                 ],
                                 "sbom": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
                                 "cve": "release_artifacts/" + RELEASE_TAG + "/" + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
@@ -266,16 +271,16 @@ if "acc-provision" != os.environ.get("TRAVIS_REPO_SLUG").split("/")[1] :
 
 else:
     if len(sys.argv) != 4:
-        print("Usage: python update-release.py PYPI_REGISTRY TAG_NAME RELEASE")
+        print("Usage: python update-release.py PYPI_REGISTRY TAG_NAME IS_RELEASE")
         sys.exit(1)
 
     PYPI_REGISTRY = sys.argv[1]
     TAG_NAME = sys.argv[2]
-    RELEASE = sys.argv[3]
+    IS_RELEASE = sys.argv[3]
     
-    if RELEASE == "True":
+    if IS_RELEASE == "True":
         # remove .z from RELEASE_TAG
-        RELEASE_TAG = RELEASE_TAG[:-2]
+        RELEASE_TAG = RELEASE_TAG.rstrip(".z")
 
     if os.path.exists(release_filepath):
         with open(release_filepath, "r") as file:
@@ -309,9 +314,9 @@ else:
                     ]
 
                 }
-                if RELEASE == "True":
+                if IS_RELEASE == "True":
                     # call a function to write "container_images" data
-                    new_release_data["container_images"] = get_container_images_data(yaml_data)
+                    new_release_data["container_images"] = get_container_images_data(yaml_data, RELEASE_TAG)
                 yaml_data["releases"].append(new_release_data)
             else:
                 for release_idx, release in enumerate(yaml_data["releases"]):
