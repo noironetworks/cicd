@@ -15,6 +15,11 @@ BUILT_IMAGE=${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /tmp
 curl -sSfL https://raw.githubusercontent.com/docker/sbom-cli-plugin/main/install.sh | sh -s --
 
+# Install latest trivy
+wget https://github.com/aquasecurity/trivy/releases/download/v0.44.1/trivy_0.44.1_Linux-64bit.deb
+sudo dpkg -i trivy_0.44.1_Linux-64bit.deb
+
+
 docker sbom --format spdx-json ${BUILT_IMAGE} | /tmp/grype | tee /tmp/cve.txt
 docker sbom ${BUILT_IMAGE} | tee /tmp/sbom.txt
 
