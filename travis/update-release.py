@@ -96,7 +96,7 @@ def get_container_images_data(yaml_data ,r_tag):
 GIT_LOCAL_DIR = "cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
 if RELEASE_TAG.endswith("rc") is False:
-        RELEASE_TAG = RELEASE_TAG +".z"
+    RELEASE_TAG = RELEASE_TAG +".z"
 
 release_filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/releases.yaml"
 
