@@ -18,11 +18,10 @@ SIGNED_RELEASE=$(git tag -v ${TRAVIS_TAG} 2>&1 | grep -i "B6878A5BBF81C515428FA1
 SIGNED_EMAIL=$(git tag -v ${TRAVIS_TAG} 2>&1 | grep -i "sumitnaiksatam@gmail.com")
 
 # Check if it is a pypi release and not a signed release then exit
-# REMOVE CHECK TO TEST PYPI RELEASE
-#if [ -n "$PYPI_RELEASE" ] && [ -z "$SIGNED_RELEASE" ] ; then
-#    echo "Push to pypi only supported for tag signed by public key: B6878A5BBF81C515428FA14E4CA0BB04A10CDFE1 (sumitnaiksatam@gmail.com)"
-#    exit 1
-#fi
+if [ -n "$PYPI_RELEASE" ] && [ -z "$SIGNED_RELEASE" ] ; then
+    echo "Push to pypi only supported for tag signed by public key: B6878A5BBF81C515428FA14E4CA0BB04A10CDFE1 (sumitnaiksatam@gmail.com)"
+    exit 1
+fi
 
 pushd provision
 python setup.py --description
@@ -34,13 +33,9 @@ DEV_TAG_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}"
 
 if [ -n "$PYPI_RELEASE" ] ; then
     #twine upload --repository-url https://pypi.org/legacy/ -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
-    # commented to test
-    #python setup.py sdist
-    #twine upload -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
-    #$SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "true"
     python setup.py sdist
-    twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$WHEEL_NAME
-    $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "true"
+    twine upload -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
+    $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "true"
 elif [ -n "$TEST_PYPI_RELEASE" ]; then
     if [ "$TRAVIS_BUILD_USER" == "noiro-tagger" ]; then
         #twine upload --repository-url https://test.pypi.org/legacy/ -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
@@ -51,8 +46,7 @@ elif [ -n "$TEST_PYPI_RELEASE" ]; then
         python setup.py sdist
         twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
         $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${OVERRIDE_VERSION}"/#files" "${DEV_TAG_NAME}" "false"
-    else
-    # testing
+    elif [ -n "$SIGNED_EMAIL" ]; then
         python setup.py sdist
         twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$WHEEL_NAME
         $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "false"

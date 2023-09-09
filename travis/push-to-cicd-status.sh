@@ -19,7 +19,7 @@ else
     IS_RELEASE=$3 
 fi
 
-GIT_REPO="https://github.com/noironetworks/test-cicd-status.git"
+GIT_REPO="https://github.com/noironetworks/cicd-status.git"
 GIT_LOCAL_DIR="cicd-status"
 GIT_BRANCH="main"
 GIT_EMAIL="test@cisco.com"
