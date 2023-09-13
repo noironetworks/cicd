@@ -16,9 +16,11 @@ if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
 else
     PYPI_REGISTRY=$1
     TAG_NAME=$2
+    IS_RELEASE=$3
+    TWINE_UPLOAD=$4
 fi
 
-GIT_REPO="https://github.com/noironetworks/cicd-status.git"
+GIT_REPO=${CICD_STATUS_REPO}
 GIT_LOCAL_DIR="cicd-status"
 GIT_BRANCH="main"
 GIT_EMAIL="test@cisco.com"
@@ -32,19 +34,18 @@ git_clone_repo() {
     git remote set-url origin "${GIT_REPO/:\/\//://$GIT_USER:$GIT_TOKEN@}"
 }
 
-
 add_artifacts() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git pull --rebase origin ${GIT_BRANCH}
-    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}" 2> /dev/null
-    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
-    cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
-    cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
-    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
+    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}" 2> /dev/null
+    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
+    cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
+    cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
+    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
 }
 
 add_trivy_vulnerabilites() {
-    trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
+    trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
 }
 
 update_container_release() {
@@ -54,12 +55,15 @@ update_container_release() {
 add_acc_provision_artifacts() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git pull --rebase origin ${GIT_BRANCH}
-    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${TRAVIS_REPO_SLUG##*/}" 2> /dev/null
-    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/"${TRAVIS_REPO_SLUG##*/}"/"${RELEASE_TAG}"-buildlog.txt
+    mkdir -p $1 2> /dev/null
+    if [[ ${TWINE_UPLOAD} == "true" ]]; then
+        echo "uploading buildlog"
+        curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > $1"/"${RELEASE_TAG}-buildlog.txt
+    fi
 }
 
-update_acc_provision_release(){
-    python $SCRIPTS_DIR/update-release.py "${PYPI_REGISTRY}" "${TAG_NAME}"
+update_acc_provision_release() {
+    python $SCRIPTS_DIR/update-release.py "${PYPI_REGISTRY}" "${TAG_NAME}" "${IS_RELEASE}"
 }
 
 git_add_commit_push() {
@@ -71,9 +75,16 @@ git_add_commit_push() {
     git stash apply
     git add .
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        git commit -a -m "${RELEASE_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "${IMAGE_SHA}"
+        git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "${IMAGE_SHA}"
     else
-        git commit -a -m "${RELEASE_TAG}-${TRAVIS_REPO_SLUG##*/}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tag: ${TAG_NAME}"
+        TG=${RELEASE_TAG}
+        if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
+            RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
+            TG=${RELEASE_TAG}rc${RC_NUM}
+        elif [[ ${IS_RELEASE} == "false" ]] ; then
+            TG=${RELEASE_Z_TAG}
+        fi
+        git commit -a -m "${TG}-${TRAVIS_REPO_SLUG##*/}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tag: ${TAG_NAME}"
     fi
     git push origin ${GIT_BRANCH}
 }
@@ -86,7 +97,14 @@ if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
     update_container_release
     add_trivy_vulnerabilites
 else
-    add_acc_provision_artifacts
+    DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
+    if [[ "${IS_RELEASE}" == "true" ]]; then
+        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/r/${TRAVIS_REPO_SLUG##*/}"
+    elif [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
+        RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
+        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/rc${RC_NUM}/${TRAVIS_REPO_SLUG##*/}"
+    fi
+    add_acc_provision_artifacts $DIR
     update_acc_provision_release
 fi
 
