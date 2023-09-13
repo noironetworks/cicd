@@ -20,10 +20,40 @@ fi
 
 GIT_REPO="https://github.com/noironetworks/cicd-status.git"
 GIT_LOCAL_DIR="cicd-status"
-GIT_BRANCH="main"
+GIT_BRANCH="test"
 GIT_EMAIL="test@cisco.com"
 GIT_TOKEN=${TRAVIS_TAGGER}
 GIT_USER="travis-tagger"
+
+LOCK_TAG="lock-tag"
+WAIT_INTERVAL=5  # Adjust this interval (in seconds) to your preference
+
+# Function to check if the lock tag exists remotely
+is_locked() {
+  git fetch --tags "$GIT_REPO" &>/dev/null
+  [ $(git tag -l "$LOCK_TAG" | wc -l) -gt 0 ]
+}
+
+# Function to acquire the lock and inform the remote repository
+acquire_lock() {
+  # Check if the lock tag exists remotely
+  if ! is_locked; then
+    # Create the lock tag and push it to the remote repository
+    git tag "$LOCK_TAG"
+    git push --tags "$GIT_REPO"
+  fi
+}
+
+# Function to release the lock and inform the remote repository
+release_lock() {
+  # Check if the lock tag exists remotely
+  if is_locked; then
+    # Delete the lock tag locally and push the deletion to the remote repository
+    git tag -d "$LOCK_TAG"
+    git push --delete "$GIT_REPO" "$LOCK_TAG"
+  fi
+}
+
 
 git_clone_repo() {
     cd /tmp/ || exit
@@ -66,9 +96,9 @@ git_add_commit_push() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git config --local user.email "${GIT_EMAIL}"
     git config --local user.name "${GIT_USER}"
-    git stash save --include-untracked
-    git pull --rebase origin ${GIT_BRANCH}
-    git stash apply
+#     git stash save --include-untracked
+#     git pull --rebase origin ${GIT_BRANCH}
+#     git stash apply
     git add .
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
         git commit -a -m "${RELEASE_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "${IMAGE_SHA}"
@@ -82,13 +112,48 @@ git_add_commit_push() {
 git_clone_repo
 
 if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-    add_artifacts
-    update_container_release
-    add_trivy_vulnerabilites
+    # Continuously check for the lock and acquire it when available
+    while true; do
+      if ! is_locked; then
+        acquire_lock
+
+        add_artifacts
+        update_container_release
+        add_trivy_vulnerabilites
+        git_add_commit_push
+
+        # Release the lock when changes are complete
+        release_lock
+
+        echo "Lock acquired and released."
+        break
+      else
+        echo "Waiting to acquire the lock..."
+      fi
+      sleep $WAIT_INTERVAL
+    done
+
 else
-    add_acc_provision_artifacts
-    update_acc_provision_release
+    # Continuously check for the lock and acquire it when available
+    while true; do
+      if ! is_locked; then
+        acquire_lock
+
+        add_acc_provision_artifacts
+        update_acc_provision_release
+        git_add_commit_push
+
+        # Release the lock when changes are complete
+        release_lock
+
+        echo "Lock acquired and released."
+        break
+      else
+        echo "Waiting to acquire the lock..."
+      fi
+      sleep $WAIT_INTERVAL
+    done
+
 fi
 
-git_add_commit_push
 
