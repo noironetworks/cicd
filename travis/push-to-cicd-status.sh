@@ -29,7 +29,7 @@ GIT_USER="travis-tagger"
 
 git_clone_repo() {
     cd /tmp/ || exit
-    git clone "${GIT_REPO/:\/\//://$GIT_USER:$GIT_TOKEN@}" "${GIT_LOCAL_DIR}"
+    git clone "${GIT_REPO/:\/\//://$GIT_USER:$GIT_TOKEN@}" -b "${GIT_BRANCH}" "${GIT_LOCAL_DIR}"
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git remote set-url origin "${GIT_REPO/:\/\//://$GIT_USER:$GIT_TOKEN@}"
 }
@@ -70,9 +70,12 @@ git_add_commit_push() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git config --local user.email "${GIT_EMAIL}"
     git config --local user.name "${GIT_USER}"
-    git stash save --include-untracked
+    git stash
     git pull --rebase origin ${GIT_BRANCH}
-    git stash apply
+    if ! git stash pop; then
+        echo "Error: Failed to apply stash."
+        return 1  # Return failure status
+    fi
     git add .
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
         git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "${IMAGE_SHA}"
@@ -92,21 +95,32 @@ git_add_commit_push() {
 
 git_clone_repo
 
-if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-    add_artifacts
-    update_container_release
-    add_trivy_vulnerabilites
-else
-    DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
-    if [[ "${IS_RELEASE}" == "true" ]]; then
-        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/r/${TRAVIS_REPO_SLUG##*/}"
-    elif [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
-        RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
-        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/rc${RC_NUM}/${TRAVIS_REPO_SLUG##*/}"
+while true; do
+    if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
+        add_artifacts
+        update_container_release
+        add_trivy_vulnerabilites
+    else
+        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
+        if [[ "${IS_RELEASE}" == "true" ]]; then
+            DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/r/${TRAVIS_REPO_SLUG##*/}"
+        elif [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
+            RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
+            DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/rc${RC_NUM}/${TRAVIS_REPO_SLUG##*/}"
+        fi
+        add_acc_provision_artifacts $DIR
+        update_acc_provision_release
     fi
-    add_acc_provision_artifacts $DIR
-    update_acc_provision_release
-fi
 
-git_add_commit_push
+    if git_add_commit_push; then
+        break  # Exit the loop if git_add_commit_push succeeds
+    else
+        # Handle the case when git_add_commit_push fails (e.g., stash pop failed). Resetting and recalculating
+        git checkout .
+        git pull --rebase origin ${GIT_BRANCH}
+        echo "Retrying git_add_commit_push after stash pop failure..."
+  fi
+done
+
+
 
