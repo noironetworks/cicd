@@ -1,11 +1,11 @@
 from datetime import datetime
 import os
+import re
 import sys
-import yaml
-import pytz
 import shutil
 import subprocess
-import re
+import yaml
+import pytz
 
 def pull_image_and_get_sha(image_name_and_tag):
     try:
@@ -35,8 +35,6 @@ def count_severity(filepath):
 
         lines = data.strip().split('\n')
 
-        
-
         # Accepted severity values
         accepted_severities = ["Critical", "High", "Medium", "Low", "Unknown"]
 
@@ -54,9 +52,6 @@ def count_severity(filepath):
 
         except IndexError:
             print(f"IndexError encountered for line: {line}")
-    
-    if len(severity_list) == 0:
-        return []
     
     result = [
         {
