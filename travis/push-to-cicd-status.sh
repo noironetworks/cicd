@@ -49,6 +49,9 @@ add_trivy_vulnerabilites() {
 }
 
 update_container_release() {
+
+    # Removing local docker image to clear local REPO_DIGEST history. Will be fetching latest digest from upstream
+    docker rmi -f "${IMAGE_SHA}"
     python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
 }
 
@@ -78,7 +81,10 @@ git_add_commit_push() {
     fi
     git add .
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "${IMAGE_SHA}"
+        docker image inspect quay.io/noiro/${IMAGE}:${IMAGE_Z_TAG}
+        DOCKER_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 0) "@sha256:") 1}}' noiro/${IMAGE}:${IMAGE_Z_TAG})
+        QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@sha256:") 1}}' quay.io/noiro/${IMAGE}:${IMAGE_Z_TAG})
+        git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "ImageId: ${IMAGE_SHA}" -m "DockerSha: ${DOCKER_REPO_DIGEST_SHA}" -m "QuaySha: ${QUAY_REPO_DIGEST_SHA}"
     else
         TG=${RELEASE_TAG}
         if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
@@ -97,9 +103,18 @@ git_clone_repo
 
 while true; do
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        add_artifacts
-        update_container_release
-        add_trivy_vulnerabilites
+        if ! add_artifacts; then
+            break
+        fi
+
+        if ! update_container_release; then
+            break
+        fi
+
+        if ! add_trivy_vulnerabilites; then
+            break
+        fi
+
     else
         DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
         if [[ "${IS_RELEASE}" == "true" ]]; then
@@ -108,9 +123,17 @@ while true; do
             RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
             DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/rc${RC_NUM}/${TRAVIS_REPO_SLUG##*/}"
         fi
-        add_acc_provision_artifacts $DIR
-        update_acc_provision_release
+
+        if ! add_acc_provision_artifacts $DIR; then
+            break
+        fi
+
+        if ! update_acc_provision_release; then
+            break
+        fi
+
     fi
+
 
     if git_add_commit_push; then
         break  # Exit the loop if git_add_commit_push succeeds
@@ -119,7 +142,7 @@ while true; do
         git checkout .
         git pull --rebase origin ${GIT_BRANCH}
         echo "Retrying git_add_commit_push after stash pop failure..."
-  fi
+    fi
 done
 
 
