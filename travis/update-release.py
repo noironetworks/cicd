@@ -413,16 +413,18 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                 if release_stream["release_name"] == search_stream:
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["acc_provision"] = acc_provision_update
+                    TG=''
                     if IS_RELEASE == "true":
                         yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["released"] = True
-                        c_images , is_valid = check_rollback_artifacts(release["release_streams"],TRAVIS_TAG_WITH_UPSTREAM_ID)
-                        if is_valid:
-                            yaml_data["releases"][release_idx]["release_streams"][release_stream_idx][
-                                "container_images"] = c_images
-                        else:
-                            yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = get_container_images_data(release["release_streams"], TRAVIS_TAG_WITH_UPSTREAM_ID)
+                        TG=TRAVIS_TAG_WITH_UPSTREAM_ID
                     elif IS_RC_RELEASE:
-                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = get_container_images_data(release["release_streams"],RC_IMAGE_TAG)
+                        TG=RC_IMAGE_TAG
+                    c_images , is_valid = check_rollback_artifacts(release["release_streams"],TG)
+                    if is_valid:
+                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = c_images
+                    else:
+                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = get_container_images_data(release["release_streams"], TG)
+                    break
 
 # Write the updated YAML data back to release.yaml
 with open(release_filepath, "w") as file:
