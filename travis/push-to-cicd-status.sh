@@ -81,9 +81,8 @@ git_add_commit_push() {
     fi
     git add .
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        docker image inspect quay.io/noiro/${IMAGE}:${IMAGE_Z_TAG}
-        DOCKER_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 0) "@sha256:") 1}}' noiro/${IMAGE}:${IMAGE_Z_TAG})
-        QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@sha256:") 1}}' quay.io/noiro/${IMAGE}:${IMAGE_Z_TAG})
+        DOCKER_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 0) "@sha256:") 1}}' ${DOCKER_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
+        QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@sha256:") 1}}' ${QUAY_NOIRO_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
         git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "ImageId: ${IMAGE_SHA}" -m "DockerSha: ${DOCKER_REPO_DIGEST_SHA}" -m "QuaySha: ${QUAY_REPO_DIGEST_SHA}"
     else
         TG=${RELEASE_TAG}
@@ -114,7 +113,6 @@ while true; do
         if ! add_trivy_vulnerabilites; then
             break
         fi
-
     else
         DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
         if [[ "${IS_RELEASE}" == "true" ]]; then
