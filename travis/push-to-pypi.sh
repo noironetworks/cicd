@@ -64,7 +64,7 @@ elif [ -n "$TEST_PYPI_RELEASE" ]; then
         if [ $? -ne 0 ]; then
             TWINE_UPLOAD="false"
         fi
-        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "false" ${TWINE_UPLOAD}
+        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "true" ${TWINE_UPLOAD}
     fi
 fi
 
