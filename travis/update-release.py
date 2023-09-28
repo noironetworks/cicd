@@ -413,6 +413,8 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                 if release_stream["release_name"] == search_stream:
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["acc_provision"] = acc_provision_update
+                    if search_stream == Z_RELEASE_TAG:
+                        break
                     TG=''
                     if IS_RELEASE == "true":
                         yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["released"] = True
