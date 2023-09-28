@@ -21,7 +21,7 @@ else
 fi
 
 GIT_REPO=${CICD_STATUS_REPO}
-GIT_LOCAL_DIR="cicd-status"
+GIT_LOCAL_DIR="test-cicd-status"
 GIT_BRANCH="main"
 GIT_EMAIL="test@cisco.com"
 GIT_TOKEN=${TRAVIS_TAGGER}
@@ -46,6 +46,17 @@ add_artifacts() {
 
 add_trivy_vulnerabilites() {
     trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
+}
+
+add_clair_vulnerabilites() {
+    QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@") 1}}' ${QUAY_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
+    curl -X GET -k \
+        -H "Accept: application/json" \
+        -H "Content-Type: application/json" \
+        -u $QUAY_TRAVIS_NOIROLABS_ROBO_USER:$QUAY_TRAVIS_NOIROLABS_ROBO_PSWD \
+        "https://quay.io/api/v1/repository/noirolabs/${IMAGE}/manifest/${QUAY_REPO_DIGEST_SHA}/security?vulnerabilities=true" \
+        | jq '.' \
+        >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
 }
 
 update_container_release() {
@@ -81,9 +92,8 @@ git_add_commit_push() {
     fi
     git add .
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        docker image inspect quay.io/noiro/${IMAGE}:${IMAGE_Z_TAG}
-        DOCKER_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 0) "@sha256:") 1}}' noiro/${IMAGE}:${IMAGE_Z_TAG})
-        QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@sha256:") 1}}' quay.io/noiro/${IMAGE}:${IMAGE_Z_TAG})
+        DOCKER_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 0) "@sha256:") 1}}' ${DOCKER_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
+        QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@sha256:") 1}}' ${QUAY_NOIRO_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
         git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "ImageId: ${IMAGE_SHA}" -m "DockerSha: ${DOCKER_REPO_DIGEST_SHA}" -m "QuaySha: ${QUAY_REPO_DIGEST_SHA}"
     else
         TG=${RELEASE_TAG}
@@ -112,6 +122,10 @@ while true; do
         fi
 
         if ! add_trivy_vulnerabilites; then
+            break
+        fi
+
+        if ! add_clair_vulnerabilites; then
             break
         fi
 

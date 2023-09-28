@@ -3,15 +3,6 @@ set -x
 SCRIPTS_DIR=$(dirname ${BASH_SOURCE[0]})
 source "$SCRIPTS_DIR/globals.sh"
 
-#ACI_CONTAINERS_DIR=/tmp/aci-containers
-#export ACI_CONTAINERS_DIR
-#git clone https://github.com/noironetworks/aci-containers.git -b ${TRAVIS_TAG} $ACI_CONTAINERS_DIR
-
-#pushd ${ACI_CONTAINERS_DIR}
-#make -C ${ACI_CONTAINERS_DIR} all-static
-#cp ${ACI_CONTAINERS_DIR}/dist-static/acikubectl provision/bin/acikubectl
-#popd
-
 pushd provision
 VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}

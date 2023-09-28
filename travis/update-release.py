@@ -8,7 +8,7 @@ import yaml
 import pytz
 
 # Constants
-GIT_LOCAL_DIR = "cicd-status"
+GIT_LOCAL_DIR = "test-cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
 Z_RELEASE_TAG = RELEASE_TAG + ".z"
 TRAVIS_TAG= os.environ.get("TRAVIS_TAG")
