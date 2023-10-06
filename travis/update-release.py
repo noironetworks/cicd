@@ -41,6 +41,16 @@ def get_repo_digest_sha(image_name_and_tag):
         return "error"
     return result.strip()
 
+def pull_get_image_id_sha(image_name_and_tag):
+    try:
+        subprocess.check_output(['docker', 'pull', image_name_and_tag], universal_newlines=True)
+        result = subprocess.check_output(['docker', 'image', 'inspect', '--format','{{.Id}}', image_name_and_tag], universal_newlines=True)
+    except subprocess.CalledProcessError as e:
+        # Handle any errors that occur during the subprocess execution
+        print("Error:", e)
+        return "error"
+    return result
+
 def count_severity(filepath):
     filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/" + filepath
     
@@ -96,155 +106,120 @@ def copyfile(src, dst):
         else:
             shutil.copy2(s, d)
 
-def get_container_images_data(r_stream,tag):
+
+def check_rollback_and_get_artifacts(r_stream,tag):
     z_container_images = {}
     c_images = []
+
     for r in r_stream:
         if r["release_name"].endswith(".z"):
             z_container_images = r["container_images"]
             break
 
     for image in z_container_images:
-        # lookup image sha's
-        quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
         # lookup image sha
+        quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
         dockerSha = pull_image_and_get_sha("noiro/" + image["name"] + ":" + tag)
 
-        copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"], "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
-        image_update = {
-            "name": image["name"],
-            "commit": image["commit"],
-            "quay": [
-                {
-                "tag": tag,
-                "sha": quaySha,
-                "link": "https://quay.io/noiro/" + image["name"] + ":" + tag
-                },
-            ],
-            "docker": [
-                {
-                "tag": tag,
-                "sha": dockerSha,
-                "link": "https://hub.docker.com/layers/noiro/" + image["name"] + "/" + tag + "/images/sha256-" + dockerSha + "?context=explore"
-                },
-            ],
-            "base-image": [
-                {
-                "sha": image["base-image"][0]["sha"],
-                "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt")
-                },
-            ],
-            "sbom": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "sbom.txt",
-            "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt",
-            "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-            "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt")
-        }
-        c_images.append(image_update)
-
-    return c_images
-
-def check_rollback_artifacts(r_stream,tag):
-    z_container_images = {}
-    rollback = False
-    c_images = []
-
-    for r in r_stream:
-        if r["release_name"].endswith(".z"):
-            z_container_images = r["container_images"]
-            break
-
-    for image in z_container_images:
-        # lookup image sha
-        quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
-        print(quaySha, image["quay"][0]["sha"])
         # Check if dockersha pulled matches with z tag sha if not do a rollback with dockersha to commit id
-        if quaySha != image["quay"][0]["sha"]:
-            # do rollback and update release.yaml with the dockersha you recieved
-            print("Mismatch happened")
-            rollback = True
-            break
-
-    if rollback:
-        for image in z_container_images:
-            # lookup image sha's
-            print("Rolling back ",image["name"])
-            quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
-            # lookup image sha
-            dockerSha = pull_image_and_get_sha("noiro/" + image["name"] + ":" + tag)
+        if quaySha != image["quay"][0]["sha"] or dockerSha != image["docker"][0]["sha"]:
+            # do rollback and update release.yaml with the quaysha you recieved
+            print("Mismatch happened for Quay/dockerSha")
+            print(quaySha, image["quay"][0]["sha"])
+            print(dockerSha, image["docker"][0]["sha"])
 
             current_directory = os.getcwd()
 
             # Change the working directory temporarily
             os.chdir("/tmp/" + GIT_LOCAL_DIR)
 
-            # Command 1: git stash
-            subprocess.run(["git", "stash"], universal_newlines=True)
+            # ImageId is same for quay and docker images
+            image_id = pull_get_image_id_sha("quay.io/noiro/" + image["name"] + ":" + tag)
 
-            # Command 2: git log --grep=xyz --format=%H
-            git_log_command = ["git", "log", "--grep=" + quaySha, "--format=%H"]
-            commit_hash = subprocess.check_output(git_log_command, universal_newlines=True).strip()
-
-            # Command 3: git checkout abcd
-            subprocess.run(["git", "checkout", commit_hash], universal_newlines=True)
-
-            # Command 4: copy some files to a destination (e.g., using shutil or any other method)
-            copyfile("docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
-                            "/tmp/z/"+image["name"])
-
-            # Command 5: git checkout main
-            subprocess.run(["git","checkout", "main"], universal_newlines=True)
-
-            # Command 6: git stash pop
-            subprocess.run(["git","stash", "pop"], universal_newlines=True)
-
-            copyfile("/tmp/z/" + image["name"], "docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+            # Run the git workflow
+            run_git_commands(image_id, image)
 
             # Return to the original working directory
             os.chdir(current_directory)
 
-            image_update = {
-                "name": image["name"],
-                "commit": image["commit"],
-                "quay": [
-                    {
-                        "tag": tag,
-                        "sha": quaySha,
-                        "link": "https://quay.io/noiro/" + image["name"] + ":" + tag
-                    },
-                ],
-                "docker": [
-                    {
-                        "tag": tag,
-                        "sha": dockerSha,
-                        "link": "https://hub.docker.com/layers/noiro/" + image[
-                            "name"] + "/" + tag + "/images/sha256-" + dockerSha + "?context=explore"
-                    },
-                ],
-                "base-image": [
-                    {
-                        "sha": image["base-image"][0]["sha"],
-                        "cve": "release_artifacts/" + RELEASE_TAG + DIR + image[
-                            "name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt",
-                        "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + image[
-                            "name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt")
-                    },
-                ],
-                "sbom": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "sbom.txt",
-                "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt",
-                "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + image[
-                    "name"] + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-                "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                "severity": count_severity(
-                    "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt")
-            }
+            image_update = create_release_image_data(image, dockerSha,quaySha,tag)
+
+            c_images.append(image_update)
+        else:
+            copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
+                     "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+
+            image_update = create_release_image_data(image, dockerSha,quaySha,tag)
 
             c_images.append(image_update)
 
-        return c_images, True
+    return c_images
 
-    return c_images, False
+
+def create_release_image_data(image,dockerSha,quaySha,tag):
+    image_data = {
+        "name": image["name"],
+        "commit": image["commit"],
+        "quay": [
+            {
+                "tag": tag,
+                "sha": quaySha,
+                "link": "https://quay.io/noiro/" + image["name"] + ":" + tag
+            },
+        ],
+        "docker": [
+            {
+                "tag": tag,
+                "sha": dockerSha,
+                "link": "https://hub.docker.com/layers/noiro/" + image[
+                    "name"] + "/" + tag + "/images/sha256-" + dockerSha + "?context=explore"
+            },
+        ],
+        "base-image": [
+            {
+                "sha": image["base-image"][0]["sha"],
+                "cve": "release_artifacts/" + RELEASE_TAG + DIR + image[
+                    "name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt",
+                "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + image[
+                    "name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt")
+            },
+        ],
+        "sbom": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "sbom.txt",
+        "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt",
+        "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + image[
+            "name"] + "/" + RELEASE_TAG + "-" + "buildlog.txt",
+        "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "severity": count_severity(
+            "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt")
+    }
+
+    return image_data
+
+def run_git_commands(image_id,image):
+    # Command 1: git stash
+
+    subprocess.run(["git", "stash"], universal_newlines=True)
+
+    # Command 2: git log --grep=xyz --format=%H
+
+    git_log_command = ["git", "log", "--grep=" + image_id, "--format=%H"]
+    commit_hash = subprocess.check_output(git_log_command, universal_newlines=True).strip()
+
+    # Command 3: git checkout abcd
+    subprocess.run(["git", "checkout", commit_hash], universal_newlines=True)
+
+    # Command 4: copy some files to a destination (e.g., using shutil or any other method)
+    copyfile("docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
+             "/tmp/z/" + image["name"])
+
+    # Command 5: git checkout main
+    subprocess.run(["git", "checkout", "main"], universal_newlines=True)
+
+    # Command 6: git stash pop
+    subprocess.run(["git", "stash", "pop"], universal_newlines=True)
+
+    copyfile("/tmp/z/" + image["name"], "docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+
 
 
 if IS_RC_RELEASE:
@@ -421,11 +396,9 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                         TG=TRAVIS_TAG_WITH_UPSTREAM_ID
                     elif IS_RC_RELEASE:
                         TG=RC_IMAGE_TAG
-                    c_images , is_valid = check_rollback_artifacts(release["release_streams"],TG)
-                    if is_valid:
-                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = c_images
-                    else:
-                        yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = get_container_images_data(release["release_streams"], TG)
+
+                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"] = check_rollback_and_get_artifacts(release["release_streams"],TG)
+
                     break
 
 # Write the updated YAML data back to release.yaml
