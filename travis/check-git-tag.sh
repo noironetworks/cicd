@@ -1,9 +1,11 @@
 #!/bin/bash
 set -x
+SCRIPTS_DIR=$(dirname ${BASH_SOURCE[0]})
+source "$SCRIPTS_DIR/globals.sh"
 
 git show --summary
 
-EXPECTED_TAG_PREFIX="6.0.3.2"
+EXPECTED_TAG_PREFIX=${RELEASE_TAG}
 
 if [[ "${TRAVIS_TAG}" != "${EXPECTED_TAG_PREFIX}"* ]] ; then
     echo "The applied git tag " ${TRAVIS_TAG} " did not match the expected tag prefix " ${EXPECTED_TAG_PREFIX} ". Skipping building."
