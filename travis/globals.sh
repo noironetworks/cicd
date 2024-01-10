@@ -1,6 +1,6 @@
 #!/bin/bash
 set -x
-RELEASE_TAGS=("6.0.3.2")
+RELEASE_TAGS=("6.0.3.2","5.4.6.7","5.5.5.5")
 RELEASE_TAG="undefined"
 if [[ ${RELEASE_TAGS[@]} =~ ${TRAVIS_TAG} ]]
 then
