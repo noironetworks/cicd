@@ -1,6 +1,14 @@
 #!/bin/bash
 set -x
-RELEASE_TAG="6.0.3.2"
+RELEASE_TAGS=("6.0.3.2")
+RELEASE_TAG="undefined"
+if [[ ${RELEASE_TAGS[@]} =~ ${TRAVIS_TAG} ]]
+then
+    RELEASE_TAG=${TRAVIS_TAG}
+else
+    echo "The applied git tag " ${TRAVIS_TAG} " did not match any of the expected release tags " ${RELEASE_TAGS[@]} ". Skipping building."
+    exit 140
+fi
 export RELEASE_TAG
 DATE_TAG=$(date +"%m%d%y")
 TRAVIS_TAG_WITH_UPSTREAM_ID=${TRAVIS_TAG}.${UPSTREAM_ID}
