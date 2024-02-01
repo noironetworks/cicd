@@ -190,7 +190,8 @@ def create_release_image_data(image,dockerSha,quaySha,tag):
             "name"] + "/" + RELEASE_TAG + "-" + "buildlog.txt",
         "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
         "severity": count_severity(
-            "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt")
+            "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt"),
+        "severity_type": "grype"
     }
 
     return image_data
@@ -326,7 +327,8 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                                 "cve": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
                                 "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
                                 "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
-                                "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt")
+                                "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt"),
+                                "severity_type": "grype"
                             }
 
             for release_stream_idx, release_stream in enumerate(release["release_streams"]):
