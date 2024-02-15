@@ -42,7 +42,7 @@ docker pull "${OVS_BASE_IMAGE}"
 docker images
 
 # Note: acc-provision-operator and opflex images come from their respective repos
-ALL_IMAGES=("aci-containers-host" "aci-containers-controller" "cnideploy" "aci-containers-operator" "openvswitch" "aci-containers-webhook" "aci-containers-certmanager")
+ALL_IMAGES=("aci-containers-host" "aci-containers-controller" "cnideploy" "aci-containers-operator" "openvswitch" "aci-containers-webhook" "aci-containers-certmanager" "aci-containers-host-ovscni")
 for IMAGE in "${ALL_IMAGES[@]}"; do
   if [[ "${IMAGE}" != "openvswitch" ]]; then
     $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${ACI_BASE_IMAGE}"
