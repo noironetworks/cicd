@@ -27,7 +27,7 @@ pushd provision
 python setup.py --description
 
 WHEEL_NAME="acc_provision-${TRAVIS_TAG}.tar.gz"
-TAG_NAME="acc_provision-${TRAVIS_TAG}"
+TAG_NAME="${TRAVIS_TAG}"
 DEV_WHEEL_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}.tar.gz"
 DEV_TAG_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}"
 TWINE_UPLOAD="true"
