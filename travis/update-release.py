@@ -396,6 +396,8 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                     if IS_RELEASE == "true":
                         yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["released"] = True
                         TG=TRAVIS_TAG_WITH_UPSTREAM_ID
+                        if "post" in TG:
+                            break
                     elif IS_RC_RELEASE:
                         TG=RC_IMAGE_TAG
 
