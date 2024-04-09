@@ -39,6 +39,7 @@ add_artifacts() {
     git pull --rebase origin ${GIT_BRANCH}
     mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}" 2> /dev/null
     curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
+    sed -i '/X-Amz-.*=\([^&]*\)&/d' /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
     cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
     cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
     cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
