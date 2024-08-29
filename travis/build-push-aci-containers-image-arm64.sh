@@ -18,12 +18,9 @@ cp "$WORKSPACE/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc" "$WORKSPACE"
 docker/copy_iptables.sh ${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG} dist-static
 
 export CC="$WORKSPACE/aarch64-linux-musl-gcc"
-export GOARCH=arm64
+export GOARCH=arm64   
 
 make -C . all-static-arm6
-
-docker buildx build --no-cache -t <tag>  --platform linux/arm64 -f Dockerfile --push .
-
 
 $SCRIPTS_DIR/build-openvswitch-travis-arm64.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE_TAG}
 docker images
