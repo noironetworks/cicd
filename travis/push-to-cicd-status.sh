@@ -111,8 +111,10 @@ while true; do
             break
         fi
 
-        if ! add_trivy_vulnerabilites; then
-            break
+        if [[ ${TRAVIS_REPO_SLUG##*/} != "opflex" ]]; then
+            if ! add_trivy_vulnerabilites; then
+                break
+            fi
         fi
     else
         DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
