@@ -12,18 +12,18 @@ OTHER_IMAGE_TAGS="${OTHER_IMAGE_TAGS} ${IMAGE_Z_TAG}"
 
 BUILT_IMAGE=${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}
 
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /tmp
 curl -sSfL https://raw.githubusercontent.com/docker/sbom-cli-plugin/main/install.sh | sh -s --
 
-# Install latest trivy
-wget https://github.com/aquasecurity/trivy/releases/download/v0.44.1/trivy_0.44.1_Linux-64bit.deb
-sudo dpkg -i trivy_0.44.1_Linux-64bit.deb
+# Install latest trivy for non-opflex builds
+if [[ $IMAGE == *"opflex"* ]]; then
+    echo "Skipping Grype/Trivy installation for image: $IMAGE"
+else
+    echo "Downloading and installing Grype/Trivy for image: $IMAGE"
+    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /tmp
+    wget https://github.com/aquasecurity/trivy/releases/download/v0.44.1/trivy_0.44.1_Linux-64bit.deb
+    sudo dpkg -i trivy_0.44.1_Linux-64bit.deb
+fi
 
-
-docker sbom --format spdx-json ${BUILT_IMAGE} | /tmp/grype | tee /tmp/cve.txt
-docker sbom ${BUILT_IMAGE} | tee /tmp/sbom.txt
-
-docker sbom --format spdx-json ${BASE_IMAGE} | /tmp/grype | tee /tmp/cve-base.txt
 
 docker login -u=$QUAY_TRAVIS_NOIROLABS_ROBO_USER -p=$QUAY_TRAVIS_NOIROLABS_ROBO_PSWD quay.io
 docker push ${BUILT_IMAGE}
@@ -44,3 +44,15 @@ docker tag ${BUILT_IMAGE} ${DOCKER_REGISTRY}/${IMAGE}:${TRAVIS_TAG_WITH_UPSTREAM
 docker push ${DOCKER_REGISTRY}/${IMAGE}:${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}
 docker tag ${BUILT_IMAGE} ${DOCKER_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG}
 docker push ${DOCKER_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG}
+
+docker sbom ${BUILT_IMAGE} | tee /tmp/sbom.txt
+
+if [[ $IMAGE == *"opflex"* ]]; then
+    echo "Skipping Grype Calculation for image: $IMAGE"
+else
+    docker sbom --format spdx-json ${BUILT_IMAGE} | /tmp/grype | tee /tmp/cve.txt
+    docker sbom --format spdx-json ${BASE_IMAGE} | /tmp/grype | tee /tmp/cve-base.txt
+fi
+
+
+
