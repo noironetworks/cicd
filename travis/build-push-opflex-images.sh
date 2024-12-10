@@ -18,11 +18,19 @@ BASE_IMAGE=$(grep -E '^FROM' docker/travis/Dockerfile-opflex | awk '{print $2}')
 docker pull ${BASE_IMAGE}
 docker images
 
-ALL_IMAGES="opflex-build-base opflex-build opflex"
-for IMAGE in ${ALL_IMAGES}; do
-  $SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${BASE_IMAGE}
-done
+BUILD_BASE=$(git show -s --format=%B "${TRAVIS_TAG}" | grep -i "opflex-build-base")
 
-IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
-$SCRIPTS_DIR/push-to-cicd-status.sh ${QUAY_NOIRO_REGISTRY} opflex ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA} ${BASE_IMAGE}
+if [[ -n "$BUILD_BASE" ]]; then
+  ALL_IMAGES="opflex-build-base"
+  for IMAGE in ${ALL_IMAGES}; do
+    $SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${BASE_IMAGE}
+  done
+else
+  ALL_IMAGES="opflex-build opflex"
+  for IMAGE in ${ALL_IMAGES}; do
+    $SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${BASE_IMAGE}
+  done
 
+  IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
+  $SCRIPTS_DIR/push-to-cicd-status.sh ${QUAY_NOIRO_REGISTRY} opflex ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${IMAGE_SHA} ${BASE_IMAGE}
+fi
