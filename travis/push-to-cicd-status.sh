@@ -46,11 +46,7 @@ add_artifacts() {
 }
 
 add_trivy_vulnerabilites() {
-    if [[ $IMAGE == opflex* ]]; then
-        echo "Skipping Trivy Calculation for image: $IMAGE"
-    else
-      trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
-    fi
+    trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
 }
 
 update_container_release() {
