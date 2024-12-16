@@ -18,9 +18,14 @@ BASE_IMAGE=$(grep -E '^FROM' docker/travis/Dockerfile-opflex | awk '{print $2}')
 docker pull ${BASE_IMAGE}
 docker images
 
-BUILD_BASE=$(git show -s --format=%B "${TRAVIS_TAG}" | grep -i "opflex-build-base")
+# Check if the tag contains "opflex-build-base"
+if [[ "${TRAVIS_TAG}" == *"opflex-build-base"* ]]; then
+  BUILD_BASE=true
+else
+  BUILD_BASE=false
+fi
 
-if [[ -n "$BUILD_BASE" ]]; then
+if [[ "${BUILD_BASE}" == true ]]; then
   ALL_IMAGES="opflex-build-base"
   for IMAGE in ${ALL_IMAGES}; do
     $SCRIPTS_DIR/push-images.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE} ${IMAGE_BUILD_TAG} ${OTHER_IMAGE_TAGS} ${BASE_IMAGE}
