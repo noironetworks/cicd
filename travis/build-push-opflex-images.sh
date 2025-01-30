@@ -10,6 +10,15 @@ IMAGE_BUILD_TAG=${IMAGE_TAG}
 OTHER_IMAGE_TAGS="${TRAVIS_TAG_WITH_UPSTREAM_ID},${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}"
 RELEASE_TAG_WITH_UPSTREAM_ID=${RELEASE_TAG}.${UPSTREAM_ID}
 
+# Check if the tag contains "opflex-build-base"
+if [[ "${TRAVIS_TAG}" == *"opflex-build-base"* ]]; then
+  BUILD_BASE=true
+  IMAGE_BUILD_TAG=${RELEASE_TAG_WITH_UPSTREAM_ID}
+  OTHER_IMAGE_TAGS="${RELEASE_TAG_WITH_UPSTREAM_ID},${RELEASE_TAG_WITH_UPSTREAM_ID}.${DATE_TAG}.${TRAVIS_BUILD_NUMBER}"
+else
+  BUILD_BASE=false
+fi
+
 docker/travis/build-opflex-travis.sh ${IMAGE_BUILD_REGISTRY} ${IMAGE_BUILD_TAG}
 docker images
 
@@ -18,12 +27,6 @@ BASE_IMAGE=$(grep -E '^FROM' docker/travis/Dockerfile-opflex | awk '{print $2}')
 docker pull ${BASE_IMAGE}
 docker images
 
-# Check if the tag contains "opflex-build-base"
-if [[ "${TRAVIS_TAG}" == *"opflex-build-base"* ]]; then
-  BUILD_BASE=true
-else
-  BUILD_BASE=false
-fi
 
 if [[ "${BUILD_BASE}" == true ]]; then
   ALL_IMAGES="opflex-build-base"
