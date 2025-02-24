@@ -21,7 +21,7 @@ else
 fi
 
 GIT_REPO=${CICD_STATUS_REPO}
-GIT_LOCAL_DIR="cicd-status"
+GIT_LOCAL_DIR="test-cicd-status"
 GIT_BRANCH="main"
 GIT_EMAIL="test@cisco.com"
 GIT_TOKEN=${TRAVIS_TAGGER}

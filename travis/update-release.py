@@ -8,7 +8,7 @@ import yaml
 import pytz
 
 # Constants
-GIT_LOCAL_DIR = "cicd-status"
+GIT_LOCAL_DIR = "test-cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
 Z_RELEASE_TAG = RELEASE_TAG + ".z"
 TRAVIS_TAG= os.environ.get("TRAVIS_TAG")
@@ -40,6 +40,9 @@ def get_repo_digest_sha(image_name_and_tag):
         print("Error:", e)
         return "error"
     return result.strip()
+
+def get_travis_branch():
+    return os.environ.get("TRAVIS_BRANCH", "unknown")
 
 def pull_get_image_id_sha(image_name_and_tag):
     try:
@@ -331,8 +334,15 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                                 "severity_type": "grype"
                             }
 
+            if IMAGE == "opflex":
+                image_update["opflex-metadata"] = {
+                    "base-image": BASE_IMAGE,
+                    "base-image-sha": get_repo_digest_sha(BASE_IMAGE),
+                }
+
+
             for release_stream_idx, release_stream in enumerate(release["release_streams"]):
-                
+
                 if release_stream["release_name"] == Z_RELEASE_TAG:
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
                     if len(yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"]) == 0:
