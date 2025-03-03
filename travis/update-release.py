@@ -41,9 +41,6 @@ def get_repo_digest_sha(image_name_and_tag):
         return "error"
     return result.strip()
 
-def get_travis_branch():
-    return os.environ.get("TRAVIS_BRANCH", "unknown")
-
 def pull_get_image_id_sha(image_name_and_tag):
     try:
         subprocess.check_output(['docker', 'pull', image_name_and_tag], universal_newlines=True)
@@ -340,9 +337,8 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                     "base-image-sha": get_repo_digest_sha(BASE_IMAGE),
                 }
 
-
             for release_stream_idx, release_stream in enumerate(release["release_streams"]):
-
+                
                 if release_stream["release_name"] == Z_RELEASE_TAG:
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
                     if len(yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"]) == 0:
