@@ -8,7 +8,7 @@ import yaml
 import pytz
 
 # Constants
-GIT_LOCAL_DIR = "cicd-status"
+GIT_LOCAL_DIR = "test-cicd-status"
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
 Z_RELEASE_TAG = RELEASE_TAG + ".z"
 TRAVIS_TAG= os.environ.get("TRAVIS_TAG")
@@ -330,6 +330,12 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                                 "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt"),
                                 "severity_type": "grype"
                             }
+
+            if IMAGE == "opflex":
+                image_update["opflex-metadata"] = {
+                    "base-image": BASE_IMAGE,
+                    "base-image-sha": get_repo_digest_sha(BASE_IMAGE),
+                }
 
             for release_stream_idx, release_stream in enumerate(release["release_streams"]):
                 
