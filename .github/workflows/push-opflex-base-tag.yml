@@ -12,17 +12,20 @@ jobs:
     env:
       CICD_REPO: "noironetworks/test-cicd-status"
       OPFLEX_REPO: "noironetworks/opflex"
-      CICD_DIR: "test-cicd-status"  # Local directory name for cloned repo
-      OPFLEX_DIR: "opflex"  # Local directory name for cloned repo
-      WORKSPACE_DIR: "workspace"
+      CICD_DIR: ${{ github.workspace }}/test-cicd-status
+      OPFLEX_DIR: ${{ github.workspace }}/opflex
+      WORKSPACE_DIR: ${{ github.workspace }}/workspace
 
     steps:
       - name: Checkout Main Repository
         uses: actions/checkout@v4
+        # with:
+        #   token: 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 #${{ secrets.NOIRO101_GENERIC_PAT }}
 
       - name: Checkout test-cicd-status Repository
         uses: actions/checkout@v4
         with:
+          token: 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 #${{ secrets.NOIRO101_GENERIC_PAT }}
           repository: ${{ env.CICD_REPO }}
           path: ${{ env.CICD_DIR }}
           fetch-depth: 1
@@ -30,6 +33,7 @@ jobs:
       - name: Checkout OpFlex Repository
         uses: actions/checkout@v4
         with:
+          token: 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 #${{ secrets.NOIRO101_GENERIC_PAT }}
           repository: ${{ env.OPFLEX_REPO }}
           path: ${{ env.OPFLEX_DIR }}
           fetch-depth: 0
@@ -48,8 +52,18 @@ jobs:
       - name: Extract current tags opflex metadata
         run: python .github/scripts/extract_opflex_metadata.py ${{ env.CICD_DIR }} ${{ env.WORKSPACE_DIR }}/opflex_metadata.json
 
+      - name: Print Metadata File
+        run: |
+          echo "Printing opflex_metadata.json:"
+          cat "${{ env.WORKSPACE_DIR }}/opflex_metadata.json" || echo "ERR: Unable to read $METADATA_FILE"
+
       - name: Push subsequent tags (only if digest changed)
-        run: bash .github/scripts/push_opflex_tags.sh ${{ env.WORKSPACE_DIR }}/opflex_metadata.json
+        run: bash .github/scripts/push_opflex_tags.sh ${{ env.WORKSPACE_DIR }}/opflex_metadata.json ${{ env.WORKSPACE_DIR }}/updated_metadata.json
+      
+      - name: Print Updated Metadata File
+        run: |
+          echo "Printing updated_metadata.json:"
+          cat "${{ env.WORKSPACE_DIR }}/updated_metadata.json" || echo "ERR: Unable to read $METADATA_FILE"
 
       - name: Update releases.yaml with new OpFlex metadata
         run: python .github/scripts/update_releases.py ${{ env.WORKSPACE_DIR }}/updated_metadata.json ${{ env.CICD_DIR }}/docs/release_artifacts/releases.yaml
@@ -57,10 +71,19 @@ jobs:
       - name: Commit and Push Updated releases.yaml
         run: |
           cd ${{ env.CICD_DIR }}
+          git config --local user.name "noiro-generic"
+          git config --local user.email "noiro-generic@github.com"
+
           if git diff --quiet docs/release_artifacts/releases.yaml; then
             echo "No changes in releases.yaml. Skipping commit."
           else
+            echo "Changes detected in releases.yaml. Committing..."
+            
             git add docs/release_artifacts/releases.yaml
-            git commit -m "Update stored digests in releases.yaml"
+            git commit -m "Update stored digests for opflex base image in releases.yaml"
+            git remote set-url origin https://noiro-generic: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@github.com/noironetworks/test-cicd-status.git
+            # git remote set-url origin https://noiro-generic:${{ secrets.NOIRO101_GENERIC_PAT }}@github.com/noironetworks/test-cicd-status.git
+            git remote -v
             git push origin main
           fi
+

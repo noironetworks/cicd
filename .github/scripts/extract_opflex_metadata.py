@@ -24,10 +24,6 @@ def load_releases(filepath):
             print(f"Error parsing YAML: {exc}")
             return {}
 
-def save_releases(filepath, data):
-    with open(filepath, "w") as file:
-        yaml.dump(data, file, default_flow_style=False)
-
 def get_base_image_digest(image_name):
     if image_name == "placeholder-image":
         return None
@@ -37,74 +33,70 @@ def get_base_image_digest(image_name):
             shell=True,
             text=True
         ).strip()
-        return result.replace("sha256:", "") if result else None
+        return result.replace("sha256:", "")
     except subprocess.CalledProcessError as e:
         print(f"Error fetching digest for {image_name}: {e}")
         return None
 
-def process_opflex_metadata(releases):
+def extract_opflex_metadata(releases):
     release_list = []
-    updated = False
 
     for release in releases.get("releases", []):
-        if not release.get("released", False):
-            for stream in release.get("release_streams", []):
-                if stream.get("release_name", "").endswith(".z"):
-                    for image in stream.get("container_images", []):
-                        if image.get("name") == "opflex":
-                            # Ensure opflex-metadata exists
-                            if "opflex-metadata" not in image:
-                                print(f"Adding missing opflex-metadata for {release['release_tag']}")
-                                image["opflex-metadata"] = {
-                                    "base-image": "placeholder-image",
-                                    "base-image-sha": "unknown",
-                                    "update_digest": "true"
-                                }
-                                updated = True
+        release_tag = release.get("release_tag", "")
+        release_status = None
+        z_stream = None
 
-                            metadata = image["opflex-metadata"]
-                            base_image = metadata["base-image"]
-                            stored_digest = metadata["base-image-sha"]
+        for stream in release.get("release_streams", []):
+            release_name = stream.get("release_name", "")
+            if ".rc" in release_name:
+                continue
+            if release_name == release_tag:
+                release_status = stream.get("released", False)
+            elif release_name.endswith(".z"):
+                z_stream = stream
 
-                            if base_image == "placeholder-image":
-                                print(f"Skipping digest lookup for {release['release_tag']} (Base-Image is placeholder).")
-                                release_list.append({
-                                    "release_tag": release["release_tag"],
-                                    "base_tag": f"{release['release_tag']}-opflex-build-base",
-                                    "base_image": base_image,
-                                    "stored_digest": stored_digest,
-                                    "latest_digest": "unknown",
-                                    "update_digest": "true"
-                                })
-                                continue
+        if z_stream:
+            if release_status is False:
+                print(f"Processing .z stream for {release_tag}")
+                for image in z_stream.get("container_images", []):
+                    if image.get("name") == "opflex":
+                        base_image = image.get("opflex-metadata", {}).get("base-image", "placeholder-image")
+                        stored_digest = image.get("opflex-metadata", {}).get("base-image-sha", "unknown")
 
-                            latest_digest = get_base_image_digest(base_image)
+                        if base_image == "placeholder-image":
+                            print(f"Skipping digest lookup for {release_tag} (Base-Image is placeholder).")
+                            release_list.append({
+                                "release_tag": release_tag,
+                                "base_tag": f"{release_tag}-opflex-build-base",
+                                "base_image": base_image,
+                                "stored_digest": stored_digest,
+                                "latest_digest": "unknown",
+                                "update_digest": "true"
+                            })
+                            continue
 
-                            if latest_digest and latest_digest != stored_digest:
-                                print(f"Digest changed for {release['release_tag']}: {stored_digest} → {latest_digest}")
-                                metadata["base-image-sha"] = latest_digest
-                                updated = True
-                                release_list.append({
-                                    "release_tag": release["release_tag"],
-                                    "base_tag": f"{release['release_tag']}-opflex-build-base",
-                                    "base_image": base_image,
-                                    "stored_digest": stored_digest,
-                                    "latest_digest": latest_digest,
-                                    "update_digest": "false"
-                                })
+                        print(f"digest lookup for {release_tag}, {base_image}")
+                        latest_digest = get_base_image_digest(base_image)
+                        if latest_digest and latest_digest != stored_digest:
+                            print(f"Digest changed for {release_tag}: {stored_digest} → {latest_digest}")
+                            image["opflex-metadata"]["base-image-sha"] = latest_digest
+                            release_list.append({
+                                "release_tag": release_tag,
+                                "base_tag": f"{release_tag}-opflex-build-base",
+                                "base_image": base_image,
+                                "stored_digest": stored_digest,
+                                "latest_digest": latest_digest,
+                                "update_digest": "false"
+                            })
+                        else:
+                            print(f"Digest not changed for {release_tag}: stored:{stored_digest} :: latest:{latest_digest}")
 
-    return release_list, updated
+    return release_list
 
 releases = load_releases(release_filepath)
-release_list, metadata_updated = process_opflex_metadata(releases)
+release_list = extract_opflex_metadata(releases)
 
-# Save updated releases.yaml if changes were made
-if metadata_updated:
-    save_releases(release_filepath, releases)
-    print(f"Updated releases.yaml with new opflex metadata and digest information.")
-
-# Save extracted metadata to JSON file
 with open(output_filepath, "w") as json_file:
     json.dump(release_list, json_file, indent=2)
 
-print(f"Extracted opflex metadata saved to {output_filepath}")
+print(f"Extracted OpFlex metadata saved to {output_filepath}")
