@@ -1,0 +1,17 @@
+name: Hello World Action
+
+on: 
+  push:
+    branches:
+      - tmp1  # Change this to your default branch if it's not 'main'
+
+jobs:
+  say-hello:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository code
+      uses: actions/checkout@v2
+
+    - name: Print Hello World
+      run: echo "Hello World"
