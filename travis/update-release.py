@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import re
 import sys
@@ -8,7 +8,7 @@ import yaml
 import pytz
 
 # Constants
-GIT_LOCAL_DIR = "cicd-status"
+GIT_LOCAL_DIR = os.environ.get("CICD_STATUS_REPO_DIR")
 RELEASE_TAG = os.environ.get("RELEASE_TAG")
 Z_RELEASE_TAG = RELEASE_TAG + ".z"
 TRAVIS_TAG= os.environ.get("TRAVIS_TAG")
@@ -148,8 +148,20 @@ def check_rollback_and_get_artifacts(r_stream,tag):
         else:
             copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
                      "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+            copyfile("release_artifacts/" + RELEASE_TAG + DIR + image[
+                    "name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
 
             image_update = create_release_image_data(image, dockerSha,quaySha,tag)
+            image_update["base-image-original"] = [
+                {
+                    "sha": image["base-image"][0]["sha"],
+                    "cve": f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt",
+                    "severity": count_severity(f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt"),
+                    "date-and-time": datetime.now(pytz.timezone("America/Los_Angeles"))
+                }
+            ]
+            image_update["update-release-cves-until"] = (datetime.now(pytz.timezone("America/Los_Angeles")) + timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S %Z") # 2 years
+
 
             c_images.append(image_update)
 
@@ -188,7 +200,7 @@ def create_release_image_data(image,dockerSha,quaySha,tag):
         "cve": "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt",
         "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + image[
             "name"] + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-        "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "build-time": datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z"),
         "severity": count_severity(
             "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve.txt"),
         "severity_type": "grype"
@@ -260,13 +272,13 @@ if not release_tag_exists:
             "release_streams": [
                 {
                     "release_name": Z_RELEASE_TAG,
-                    "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "last_updated": datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z"),
                     "container_images": [],
                     "acc_provision": []
                 },
                 {
                     "release_name": RELEASE_TAG,
-                    "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "last_updated": datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z"),
                     "container_images": [],
                     "acc_provision": [],
                     "released": False
@@ -326,7 +338,7 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                                 "sbom": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "sbom.txt",
                                 "cve": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt",
                                 "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-                                "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                                "build-time": datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z"),
                                 "severity": count_severity("release_artifacts/" + RELEASE_TAG + DIR + IMAGE + "/" + RELEASE_TAG + "-" + "cve.txt"),
                                 "severity_type": "grype"
                             }
@@ -334,7 +346,7 @@ for release_idx, release in enumerate(yaml_data["releases"]):
             for release_stream_idx, release_stream in enumerate(release["release_streams"]):
                 
                 if release_stream["release_name"] == Z_RELEASE_TAG:
-                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
+                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z")
                     if len(yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"]) == 0:
                         yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["container_images"].append(image_update)
                     else:
@@ -370,7 +382,7 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                 if not RC_RELEASE_EXISTS:
                     release_stream = {
                         "release_name": search_stream,
-                        "last_updated": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                        "last_updated": datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z"),
                         "container_images": [],
                         "acc_provision": [],
                     }
@@ -383,12 +395,12 @@ for release_idx, release in enumerate(yaml_data["releases"]):
                                 "TRAVIS_REPO_SLUG") + "/commit/" + os.environ.get("TRAVIS_COMMIT"),
                                         "sha": os.environ.get("TRAVIS_COMMIT")}],
                             "build-logs": "release_artifacts/" + RELEASE_TAG + DIR + "acc-provision" + "/" + RELEASE_TAG + "-" + "buildlog.txt",
-                            "build-time": datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                            "build-time": datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z"),
                         }
                     ]
             for release_stream_idx, release_stream in enumerate(release["release_streams"]):
                 if release_stream["release_name"] == search_stream:
-                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.utcnow().astimezone(pacific_time).strftime("%Y-%m-%d %H:%M:%S %Z")
+                    yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["last_updated"] = datetime.now(pytz.timezone("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z")
                     yaml_data["releases"][release_idx]["release_streams"][release_stream_idx]["acc_provision"] = acc_provision_update
                     if search_stream == Z_RELEASE_TAG:
                         break
