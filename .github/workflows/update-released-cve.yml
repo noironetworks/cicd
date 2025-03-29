@@ -1,0 +1,72 @@
+name: Update Released CVEs
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight UTC
+  workflow_dispatch:
+ # push:            # Uncomment this section to allow manual triggering of the workflow
+ #   branches:
+ #     - 'test-branch'
+
+jobs:
+  update-releases:
+    runs-on: ubuntu-latest
+    env:
+      CICD_REPO: "noironetworks/cicd-status"
+      CICD_DIR: ${{ github.workspace }}/cicd-status
+      GIT_USER_NAME: "noiro-generic"
+      GIT_USER_EMAIL: "noiro-generic@github.com"
+
+    steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.NOIRO101_GENERIC_PAT }}
+
+      - name: Checkout cicd-status Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.NOIRO101_GENERIC_PAT }}
+          repository: ${{ env.CICD_REPO }}
+          path: ${{ env.CICD_DIR }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install requests pyyaml pytz
+
+      - name: Update the CVEs
+        env:
+          INPUT_QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          INPUT_QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+          INPUT_SLAVE_TAG: "172.28.184.245"
+          INPUT_QUAY_API_ENDPOINT: "https://quay.io/api/v1/repository/noiro"
+          INPUT_BASE_QUAY_API_ENDPOINT: "https://quay.io/api/v1/repository/noirolabs"
+          INPUT_RELEASES_YAML: ${{ env.CICD_DIR }}/docs/release_artifacts/releases.yaml
+        run: |
+          python3 .github/scripts/cicd_cve_update.py
+
+      - name: Commit and Push Updated releases.yaml
+        run: |
+          cd ${{ env.CICD_DIR }}
+          git config --local user.name "${{ env.GIT_USER_NAME }}"
+          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+          
+          # Ensure the repository is not shallow to allow for proper commit history
+          # This is important for pushing changes back to the repository
+          git fetch --unshallow || git fetch --all
+
+          if git diff --quiet docs/release_artifacts/releases.yaml; then
+            echo "No changes in releases.yaml. Skipping commit."
+          else
+            echo "Changes detected in releases.yaml. Committing..."
+            git remote set-url origin https://noiro-generic:${{ secrets.NOIRO101_GENERIC_PAT }}@github.com/${{ env.CICD_REPO }}.git
+            git checkout main
+            git add .
+            git commit --amend --no-edit
+            git push -f origin main
+          fi
