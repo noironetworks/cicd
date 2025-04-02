@@ -148,8 +148,8 @@ def check_rollback_and_get_artifacts(r_stream,tag):
         else:
             copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
                      "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
-            copyfile("release_artifacts/" + RELEASE_TAG + DIR + image[
-                    "name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", "release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
+            copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", 
+                     "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
 
             image_update = create_release_image_data(image, dockerSha,quaySha,tag)
             image_update["base-image-original"] = [
