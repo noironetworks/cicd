@@ -92,7 +92,7 @@ def count_severity(filepath):
     # Return the results
     return result
 
-
+# copies src directory to dst directory
 def copyfile(src, dst):
     # Check if dst exists, if not, create it
     if not os.path.exists(dst):
@@ -148,7 +148,7 @@ def check_rollback_and_get_artifacts(r_stream,tag):
         else:
             copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
                      "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
-            copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", 
+            shutil.copy2("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", 
                      "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
 
             image_update = create_release_image_data(image, dockerSha,quaySha,tag)
