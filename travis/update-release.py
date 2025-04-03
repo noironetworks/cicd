@@ -216,22 +216,29 @@ def run_git_commands(image_id,image):
     # Command 2: git log --grep=xyz --format=%H
 
     git_log_command = ["git", "log", "--grep=" + image_id, "--format=%H"]
-    commit_hash = subprocess.check_output(git_log_command, universal_newlines=True).strip()
+    commit_hashes = subprocess.check_output(git_log_command, universal_newlines=True).strip().splitlines()
+    if len(commit_hashes) == 0:
+        print("No commit found with the specified grep pattern.")
+    else:
+        print(f"Found {len(commit_hashes)} commit(s) with the specified grep pattern.")
 
-    # Command 3: git checkout abcd
-    subprocess.run(["git", "checkout", commit_hash], universal_newlines=True)
+        commit_hash = commit_hashes[0]
+        print(f"Using commit hash: {commit_hash}")
+        
+        # Command 3: git checkout abcd
+        subprocess.run(["git", "checkout", commit_hash], universal_newlines=True)
 
-    # Command 4: copy some files to a destination (e.g., using shutil or any other method)
-    copyfile("docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
-             "/tmp/z/" + image["name"])
+        # Command 4: copy some files to a destination (e.g., using shutil or any other method)
+        copyfile("docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
+                "/tmp/z/" + image["name"])
 
-    # Command 5: git checkout main
-    subprocess.run(["git", "checkout", "main"], universal_newlines=True)
+        # Command 5: git checkout main
+        subprocess.run(["git", "checkout", "main"], universal_newlines=True)
 
-    # Command 6: git stash pop
-    subprocess.run(["git", "stash", "pop"], universal_newlines=True)
+        # Command 6: git stash pop
+        subprocess.run(["git", "stash", "pop"], universal_newlines=True)
 
-    copyfile("/tmp/z/" + image["name"], "docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+        copyfile("/tmp/z/" + image["name"], "docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
 
 
 
