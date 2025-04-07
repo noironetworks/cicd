@@ -1,6 +1,6 @@
 #!/bin/bash
 set -x
-RELEASE_TAG="6.1.1.3"
+RELEASE_TAG="6.1.1.4"
 export RELEASE_TAG
 DATE_TAG=$(date +"%m%d%y")
 TRAVIS_TAG_WITH_UPSTREAM_ID=${TRAVIS_TAG}.${UPSTREAM_ID}
