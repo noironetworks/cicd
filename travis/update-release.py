@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import re
 import sys
@@ -117,6 +117,7 @@ def check_rollback_and_get_artifacts(r_stream,tag):
             break
 
     for image in z_container_images:
+        image_update = {}
         # lookup image sha
         quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
         dockerSha = pull_image_and_get_sha("noiro/" + image["name"] + ":" + tag)
@@ -144,26 +145,25 @@ def check_rollback_and_get_artifacts(r_stream,tag):
 
             image_update = create_release_image_data(image, dockerSha,quaySha,tag)
 
-            c_images.append(image_update)
         else:
             copyfile("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
                      "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
-            shutil.copy2("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", 
-                     "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
 
             image_update = create_release_image_data(image, dockerSha,quaySha,tag)
+
+        if not os.path.exists("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt"):
+            shutil.copy2("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", 
+                        "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
             image_update["base-image-original"] = [
-                {
-                    "sha": image["base-image"][0]["sha"],
-                    "cve": f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt",
-                    "severity": count_severity(f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt"),
-                    "date-and-time": datetime.now(pytz.timezone("America/Los_Angeles"))
-                }
-            ]
+                    {
+                        "sha": image["base-image"][0]["sha"],
+                        "cve": f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt",
+                        "severity": count_severity(f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt"),
+                        "date-and-time": datetime.now(pytz.timezone("America/Los_Angeles"))
+                    }
+                ]
             image_update["update-release-cves-until"] = (datetime.now(pytz.timezone("America/Los_Angeles")) + timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S %Z") # 2 years
-
-
-            c_images.append(image_update)
+        c_images.append(image_update)
 
     return c_images
 
@@ -216,22 +216,29 @@ def run_git_commands(image_id,image):
     # Command 2: git log --grep=xyz --format=%H
 
     git_log_command = ["git", "log", "--grep=" + image_id, "--format=%H"]
-    commit_hash = subprocess.check_output(git_log_command, universal_newlines=True).strip()
+    commit_hashes = subprocess.check_output(git_log_command, universal_newlines=True).strip().splitlines()
+    if len(commit_hashes) == 0:
+        print("No commit found with the specified grep pattern.")
+    else:
+        print(f"Found {len(commit_hashes)} commit(s) with the specified grep pattern.")
 
-    # Command 3: git checkout abcd
-    subprocess.run(["git", "checkout", commit_hash], universal_newlines=True)
+        commit_hash = commit_hashes[0]
+        print(f"Using commit hash: {commit_hash}")
+        
+        # Command 3: git checkout abcd
+        subprocess.run(["git", "checkout", commit_hash], universal_newlines=True)
 
-    # Command 4: copy some files to a destination (e.g., using shutil or any other method)
-    copyfile("docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
-             "/tmp/z/" + image["name"])
+        # Command 4: copy some files to a destination (e.g., using shutil or any other method)
+        copyfile("docs/release_artifacts/" + RELEASE_TAG + "/z/" + image["name"],
+                "/tmp/z/" + image["name"])
 
-    # Command 5: git checkout main
-    subprocess.run(["git", "checkout", "main"], universal_newlines=True)
+        # Command 5: git checkout main
+        subprocess.run(["git", "checkout", "main"], universal_newlines=True)
 
-    # Command 6: git stash pop
-    subprocess.run(["git", "stash", "pop"], universal_newlines=True)
+        # Command 6: git stash pop
+        subprocess.run(["git", "stash", "pop"], universal_newlines=True)
 
-    copyfile("/tmp/z/" + image["name"], "docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
+        copyfile("/tmp/z/" + image["name"], "docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"])
 
 
 
