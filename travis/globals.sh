@@ -15,6 +15,6 @@ RC_REGEX=${RC_PREFIX}[0-9]+
 QUAY_REGISTRY=quay.io/noirolabs
 QUAY_NOIRO_REGISTRY=quay.io/noiro
 DOCKER_REGISTRY=docker.io/noiro
-CICD_STATUS_REPO="https://github.com/noironetworks/cicd-status.git"
-CICD_STATUS_REPO_DIR="cicd-status"
+CICD_STATUS_REPO="https://github.com/noironetworks/test-cicd-status.git"
+CICD_STATUS_REPO_DIR="test-cicd-status"
 export CICD_STATUS_REPO_DIR
