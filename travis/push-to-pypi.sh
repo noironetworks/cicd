@@ -46,7 +46,7 @@ if [ -n "$PYPI_RELEASE" ] ; then
     $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" ${IS_RELEASE} ${TWINE_UPLOAD}
 
 elif [ -n "$TEST_PYPI_RELEASE" ]; then
-    if [ "$TRAVIS_BUILD_USER" == "noiro-tagger" ]; then
+    if [[ "$TRAVIS_BUILD_USER" == "noiro-tagger" || "$TRAVIS_BUILD_USER" == "noiro-generic" ]]; then
         #twine upload --repository-url https://test.pypi.org/legacy/ -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
         VERSION=${TRAVIS_TAG}
         OVERRIDE_VERSION=${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}
