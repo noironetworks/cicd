@@ -122,6 +122,10 @@ def check_rollback_and_get_artifacts(r_stream,tag):
         quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
         dockerSha = pull_image_and_get_sha("noiro/" + image["name"] + ":" + tag)
 
+        if quaySha == "error" or dockerSha == "error":
+            print(f"Please check the image name and tag, Error pulling image: quay.io/noiro/{image['name']}:{tag} or noiro/{image['name']}:{tag}, skipping...")
+            continue
+
         # Check if dockersha pulled matches with z tag sha if not do a rollback with dockersha to commit id
         if quaySha != image["quay"][0]["sha"] or dockerSha != image["docker"][0]["sha"]:
             # do rollback and update release.yaml with the quaysha you recieved
