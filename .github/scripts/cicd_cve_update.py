@@ -153,16 +153,12 @@ def process_base_image(container_image, release_tag, release_stream, base_quay_a
     return container_image
 
 def get_base_image(image_name, slave_tag):
-    if image_name == "acc-provision-operator":
-        base_image = "ansible-operator"
-    elif image_name in ["openvswitch", "opflex", "aci-containers-host", "aci-containers-host-ovscni"]:
+    if image_name in ["openvswitch", "opflex", "aci-containers-host", "aci-containers-host-ovscni"]:
         base_image = "ubi9-minimal"
     else:
         base_image = "ubi9"
 
-    if image_name == "acc-provision-operator":
-        base_tag = "main." + slave_tag
-    elif image_name == "opflex":
+    if image_name == "opflex":
         base_tag = "9.3." + slave_tag
     else:
         base_tag = "latest." + slave_tag

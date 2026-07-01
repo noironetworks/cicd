@@ -22,11 +22,6 @@ fi
 
 export UPSTREAM_IMAGE_Z_TAG
 
-ACC_PROVISION_OPERATOR_VERSION="acc_provision_operator_version: "${UPSTREAM_IMAGE_TAG}
-OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/acc-provision-operator/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
-NEW_ACC_PROVISION_OPERATOR_VERSION="acc_provision_operator_version: "${OTHER_TAG_FOR_Z_TAG}
-sed -i "s/${ACC_PROVISION_OPERATOR_VERSION}/${NEW_ACC_PROVISION_OPERATOR_VERSION}/" acc_provision/versions.yaml
-
 ACI_CONTAINERS_CONTROLLER_VERSION="aci_containers_controller_version: "${UPSTREAM_IMAGE_TAG}
 OTHER_TAG_FOR_Z_TAG=`curl -L -s 'https://quay.io/api/v1/repository/noiro/aci-containers-controller/tag/' | jq -r ' . as $parent | ( .tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest as $digest | ($parent.tags[] | select((.manifest_digest==$digest) and .name!=$ENV.UPSTREAM_IMAGE_Z_TAG) | .name ) )'`
 NEW_ACI_CONTAINERS_CONTROLLER_VERSION="aci_containers_controller_version: "${OTHER_TAG_FOR_Z_TAG}
