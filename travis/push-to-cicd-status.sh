@@ -37,12 +37,22 @@ git_clone_repo() {
 add_artifacts() {
     cd /tmp/"${GIT_LOCAL_DIR}" || exit
     git pull --rebase origin ${GIT_BRANCH}
-    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}" 2> /dev/null
-    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
-    sed -i '/X-Amz-.*=\([^&]*\)&/d' /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
-    cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
-    cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
-    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
+    ARTIFACT_DIR=/tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"
+    mkdir -p "${ARTIFACT_DIR}" 2> /dev/null
+    if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+        # GitHub Actions job logs are only retrievable after the run; record the run URL.
+        printf 'GitHub Actions build log: %s/%s/actions/runs/%s (attempt %s)\n' \
+            "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" \
+            > "${ARTIFACT_DIR}"/"${RELEASE_TAG}"-buildlog.txt
+        SCAN_DIR="${CI_ARTIFACT_DIR}/security-artifacts/${IMAGE}"
+    else
+        curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > "${ARTIFACT_DIR}"/"${RELEASE_TAG}"-buildlog.txt
+        sed -i '/X-Amz-.*=\([^&]*\)&/d' "${ARTIFACT_DIR}"/"${RELEASE_TAG}"-buildlog.txt
+        SCAN_DIR=/tmp
+    fi
+    cp "${SCAN_DIR}"/sbom.txt "${ARTIFACT_DIR}"/"${RELEASE_TAG}"-sbom.txt
+    cp "${SCAN_DIR}"/cve.txt "${ARTIFACT_DIR}"/"${RELEASE_TAG}"-cve.txt
+    cp "${SCAN_DIR}"/cve-base.txt "${ARTIFACT_DIR}"/"${RELEASE_TAG}"-cve-base.txt
 }
 
 add_trivy_vulnerabilites() {
@@ -62,7 +72,13 @@ add_acc_provision_artifacts() {
     mkdir -p $1 2> /dev/null
     if [[ ${TWINE_UPLOAD} == "true" ]]; then
         echo "uploading buildlog"
-        curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > $1"/"${RELEASE_TAG}-buildlog.txt
+        if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+            printf 'GitHub Actions build log: %s/%s/actions/runs/%s (attempt %s)\n' \
+                "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" \
+                > $1"/"${RELEASE_TAG}-buildlog.txt
+        else
+            curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > $1"/"${RELEASE_TAG}-buildlog.txt
+        fi
     fi
 }
 
@@ -111,7 +127,7 @@ while true; do
             break
         fi
 
-        if [[ ${TRAVIS_REPO_SLUG##*/} != "opflex" ]]; then
+        if [[ ${TRAVIS_REPO_SLUG##*/} != "opflex" && "${GITHUB_ACTIONS:-false}" != "true" ]]; then
             if ! add_trivy_vulnerabilites; then
                 break
             fi

@@ -107,7 +107,7 @@ else
     "$SCRIPTS_DIR/push-images.sh" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_IMAGE}"
   done
 
-  if [[ "${GITHUB_ACTIONS:-false}" != "true" && "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+  if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
     IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
     "$SCRIPTS_DIR/push-to-cicd-status.sh" "${QUAY_NOIRO_REGISTRY}" opflex "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_IMAGE}"
   fi
