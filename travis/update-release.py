@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+import copy
 import os
 import re
 import sys
@@ -53,33 +54,33 @@ def pull_get_image_id_sha(image_name_and_tag):
 
 def count_severity(filepath):
     filepath = "/tmp/" + GIT_LOCAL_DIR + "/docs/" + filepath
-    
+
     severity_list = []
 
     if os.path.exists(filepath):
         with open(filepath, "r") as file:
             data = file.read()
 
-        lines = data.strip().split('\n')
-
-        # Accepted severity values
-        accepted_severities = ["Critical", "High", "Medium", "Low", "Unknown"]
-
-        try:
-            # Loop through each line (ignoring the first line) and extract the SEVERITY value
-            for line in lines[1:]:
-                columns = line.split()
-                severity = columns[-1]
-
-                if severity not in accepted_severities:
-                    print(f"Unexpected severity value found: {severity}")
+        lines = data.splitlines()
+        header_index = next(
+            (index for index, line in enumerate(lines) if "SEVERITY" in line),
+            None,
+        )
+        if header_index is not None:
+            for line in lines[header_index + 1:]:
+                if not line.strip():
                     break
-
+                matches = re.findall(
+                    r"\b(Critical|High|Medium|Low|Unknown|Negligible)\b", line
+                )
+                if not matches:
+                    print(f"Unable to parse severity from line: {line}")
+                    break
+                severity = matches[-1]
+                if severity == "Negligible":
+                    severity = "Unknown"
                 severity_list.append(severity)
 
-        except IndexError:
-            print(f"IndexError encountered for line: {str(IndexError)}")
-    
     result = [
         {
             "C": severity_list.count("Critical"),
@@ -121,6 +122,8 @@ def check_rollback_and_get_artifacts(r_stream,tag):
         # lookup image sha
         quaySha = pull_image_and_get_sha("quay.io/noiro/" + image["name"] + ":" + tag)
         dockerSha = pull_image_and_get_sha("noiro/" + image["name"] + ":" + tag)
+        if "error" in (quaySha, dockerSha):
+            raise RuntimeError("Unable to resolve release image digests")
 
         # Check if dockersha pulled matches with z tag sha if not do a rollback with dockersha to commit id
         if quaySha != image["quay"][0]["sha"] or dockerSha != image["docker"][0]["sha"]:
@@ -136,6 +139,8 @@ def check_rollback_and_get_artifacts(r_stream,tag):
 
             # ImageId is same for quay and docker images
             image_id = pull_get_image_id_sha("quay.io/noiro/" + image["name"] + ":" + tag)
+            if image_id == "error":
+                raise RuntimeError("Unable to resolve release image ID")
 
             # Run the git workflow
             run_git_commands(image_id, image)
@@ -151,18 +156,56 @@ def check_rollback_and_get_artifacts(r_stream,tag):
 
             image_update = create_release_image_data(image, dockerSha,quaySha,tag)
 
-        if not os.path.exists("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt"):
-            shutil.copy2("/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base.txt", 
-                        "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG + DIR + image["name"] + "/" + RELEASE_TAG + "-" + "cve-base-original.txt")
-            image_update["base-image-original"] = [
-                    {
-                        "sha": image["base-image"][0]["sha"],
-                        "cve": f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt",
-                        "severity": count_severity(f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/{RELEASE_TAG}-cve-base-original.txt"),
-                        "date-and-time": datetime.now(pytz.timezone("America/Los_Angeles"))
-                    }
-                ]
-            image_update["update-release-cves-until"] = (datetime.now(pytz.timezone("America/Los_Angeles")) + timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S %Z") # 2 years
+        base_image = copy.deepcopy(image["base-image"])
+        source_prefix = f"release_artifacts/{RELEASE_TAG}/z/"
+        target_prefix = f"release_artifacts/{RELEASE_TAG}{DIR}"
+        for entry in base_image:
+            if entry.get("cve", "").startswith(source_prefix):
+                entry["cve"] = target_prefix + entry["cve"][len(source_prefix):]
+
+        image_update["base-image"] = base_image
+        artifact_dir = (
+            "/tmp/" + GIT_LOCAL_DIR + "/docs/release_artifacts/" + RELEASE_TAG
+            + DIR + image["name"]
+        )
+        original_report = os.path.join(
+            artifact_dir, RELEASE_TAG + "-cve-base-original.txt"
+        )
+        if not os.path.exists(original_report):
+            shutil.copy2(
+                os.path.join(artifact_dir, RELEASE_TAG + "-cve-base.txt"),
+                original_report,
+            )
+
+        base_image_sha = image["base-image"][0]["sha"]
+        base_image_sha_file = os.path.join(
+            artifact_dir, RELEASE_TAG + "-base-image-sha.txt"
+        )
+        if os.path.exists(base_image_sha_file):
+            with open(base_image_sha_file, "r") as sha_file:
+                saved_sha = sha_file.read().strip().removeprefix("sha256:")
+            if re.fullmatch(r"[0-9a-f]{64}", saved_sha):
+                base_image_sha = saved_sha
+
+        original_cve = (
+            f"release_artifacts/{RELEASE_TAG}{DIR}{image['name']}/"
+            f"{RELEASE_TAG}-cve-base-original.txt"
+        )
+        image_update["base-image-original"] = [
+            {
+                "sha": base_image_sha,
+                "cve": original_cve,
+                "severity": count_severity(original_cve),
+                "severity_type": "grype",
+                "date-and-time": datetime.now(
+                    pytz.timezone("America/Los_Angeles")
+                ),
+            }
+        ]
+        image_update["update-release-cves-until"] = (
+            datetime.now(pytz.timezone("America/Los_Angeles"))
+            + timedelta(days=730)
+        ).strftime("%Y-%m-%d %H:%M:%S %Z")
         c_images.append(image_update)
 
     return c_images
