@@ -1,5 +1,7 @@
 #!/bin/bash
-set -x
+if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
+    set -x
+fi
 SCRIPTS_DIR=$(dirname ${BASH_SOURCE[0]})
 source "$SCRIPTS_DIR/globals.sh"
 
@@ -26,6 +28,20 @@ GIT_BRANCH="main"
 GIT_EMAIL="test@cisco.com"
 GIT_TOKEN=${TRAVIS_TAGGER}
 GIT_USER="travis-tagger"
+
+write_acc_provision_build_log() {
+    local destination=$1
+    if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+        {
+            printf 'GitHub Actions run: %s\n' "${TRAVIS_JOB_WEB_URL:-${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}}"
+            printf 'Source commit: %s\n' "${TRAVIS_COMMIT}"
+            printf 'Trigger tag: %s\n' "${TRAVIS_TAG}"
+        } > "${destination}"
+    else
+        curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > "${destination}"
+        sed -i '/X-Amz-.*=\([^&]*\)&/d' "${destination}"
+    fi
+}
 
 git_clone_repo() {
     cd /tmp/ || exit
@@ -62,7 +78,7 @@ add_acc_provision_artifacts() {
     mkdir -p $1 2> /dev/null
     if [[ ${TWINE_UPLOAD} == "true" ]]; then
         echo "uploading buildlog"
-        curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > $1"/"${RELEASE_TAG}-buildlog.txt
+        write_acc_provision_build_log "$1/${RELEASE_TAG}-buildlog.txt"
     fi
 }
 
@@ -99,21 +115,23 @@ git_add_commit_push() {
 }
 
 
-git_clone_repo
+if ! git_clone_repo; then
+    exit 1
+fi
 
 while true; do
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
         if ! add_artifacts; then
-            break
+            exit 1
         fi
 
         if ! update_container_release; then
-            break
+            exit 1
         fi
 
         if [[ ${TRAVIS_REPO_SLUG##*/} != "opflex" ]]; then
             if ! add_trivy_vulnerabilites; then
-                break
+                exit 1
             fi
         fi
     else
@@ -126,11 +144,11 @@ while true; do
         fi
 
         if ! add_acc_provision_artifacts $DIR; then
-            break
+            exit 1
         fi
 
         if ! update_acc_provision_release; then
-            break
+            exit 1
         fi
 
     fi
@@ -145,6 +163,3 @@ while true; do
         echo "Retrying git_add_commit_push after stash pop failure..."
     fi
 done
-
-
-
