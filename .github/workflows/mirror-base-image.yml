@@ -1,0 +1,121 @@
+name: Mirror base images
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: mirror-base-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror base images to Quay
+    if: github.repository == 'noironetworks/cicd'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Install skopeo
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+
+      - name: Authenticate to Quay
+        shell: bash
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_NOIROLABS_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_NOIROLABS_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+
+          [[ -n "${QUAY_USERNAME}" ]] || {
+            echo "::error::Missing repository secret QUAY_NOIROLABS_USERNAME"
+            exit 1
+          }
+          [[ -n "${QUAY_TOKEN}" ]] || {
+            echo "::error::Missing repository secret QUAY_NOIROLABS_TOKEN"
+            exit 1
+          }
+
+          auth_dir="${RUNNER_TEMP}/mirror-base-images-auth"
+          auth_file="${auth_dir}/auth.json"
+          install -d -m 700 "${auth_dir}"
+          echo "SKOPEO_AUTH_FILE=${auth_file}" >> "${GITHUB_ENV}"
+
+          printf '%s' "${QUAY_TOKEN}" |
+            skopeo login --authfile "${auth_file}" \
+              --username "${QUAY_USERNAME}" --password-stdin quay.io
+          chmod 600 "${auth_file}"
+
+      - name: Mirror and verify images
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mirror_image() {
+            local source_image="$1"
+            local destination_image="$2"
+            local source_digest
+            local source_reference
+            local destination_digest
+
+            source_digest="$(
+              skopeo inspect --raw --retry-times 3 \
+                "docker://${source_image}" |
+                skopeo manifest-digest /dev/stdin
+            )"
+            source_reference="${source_image%:*}@${source_digest}"
+
+            echo "Mirroring ${source_reference} -> ${destination_image}"
+            skopeo copy \
+              --all \
+              --preserve-digests \
+              --retry-times 3 \
+              --dest-authfile "${SKOPEO_AUTH_FILE}" \
+              "docker://${source_reference}" \
+              "docker://${destination_image}"
+
+            destination_digest="$(
+              skopeo inspect --raw --retry-times 3 \
+                --authfile "${SKOPEO_AUTH_FILE}" \
+                "docker://${destination_image}" |
+                skopeo manifest-digest /dev/stdin
+            )"
+
+            [[ "${source_digest}" == "${destination_digest}" ]] || {
+              echo "::error::Digest mismatch for ${destination_image}: source=${source_digest}, destination=${destination_digest}"
+              exit 1
+            }
+
+            echo "Verified ${destination_image}@${destination_digest}"
+          }
+
+          mirror_image \
+            registry.access.redhat.com/ubi9/ubi:latest \
+            quay.io/noirolabs/ubi9:latest
+          mirror_image \
+            registry.access.redhat.com/ubi9/ubi:9.3 \
+            quay.io/noirolabs/ubi9:9.3
+          mirror_image \
+            registry.access.redhat.com/ubi9/ubi-minimal:latest \
+            quay.io/noirolabs/ubi9-minimal:latest
+          mirror_image \
+            registry.access.redhat.com/ubi9/ubi-minimal:9.3 \
+            quay.io/noirolabs/ubi9-minimal:9.3
+
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -n "${SKOPEO_AUTH_FILE:-}" ]]; then
+            rm -f -- "${SKOPEO_AUTH_FILE}"
+          fi
