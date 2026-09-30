@@ -17,9 +17,9 @@ import tempfile
 from typing import Dict, List, Sequence, Tuple
 
 
-TARGET_RELEASE = "6.1.1.7"
+TARGET_RELEASE = os.environ["RELEASE_TAG"]
 TARGET_STREAM = f"{TARGET_RELEASE}.z"
-UPSTREAM_ID = "81c2369"
+UPSTREAM_ID = os.environ["UPSTREAM_ID"]
 TARGET_Z_TAG = f"{TARGET_RELEASE}.{UPSTREAM_ID}.z"
 QUAY_REGISTRY_PREFIX = "quay.io/noiro"
 DOCKER_REGISTRY_PREFIX = "docker.io/noiro"
