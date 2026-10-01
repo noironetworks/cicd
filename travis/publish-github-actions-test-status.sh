@@ -3,13 +3,18 @@
 
 set -Eeuo pipefail
 
-readonly TARGET_RELEASE="6.1.1.7"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+: "${UPSTREAM_ID:?UPSTREAM_ID is required}"
+export TRAVIS_TAG="${TRAVIS_TAG:-${GITHUB_REF_NAME:-}}"
+export TRAVIS_BUILD_NUMBER="${TRAVIS_BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-}}"
+source "${SCRIPT_DIR}/globals.sh"
+
+readonly TARGET_RELEASE="${RELEASE_TAG}"
 readonly TARGET_STREAM="${TARGET_RELEASE}.z"
 readonly TARGET_REPOSITORY="noironetworks/cicd-status"
 readonly TARGET_BRANCH="${CICD_STATUS_BRANCH:-main}"
 readonly TARGET_REPOSITORY_URL="https://github.com/${TARGET_REPOSITORY}.git"
 readonly MAX_PUSH_ATTEMPTS=3
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly UPDATER="${SCRIPT_DIR}/update-github-actions-release.py"
 
 die() {

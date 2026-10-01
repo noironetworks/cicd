@@ -2,7 +2,7 @@
 if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
   set -x
 fi
-RELEASE_TAG="6.1.1.7"
+RELEASE_TAG="6.1.1.8"
 export RELEASE_TAG
 if [[ "${GITHUB_ACTIONS:-false}" == "true" && -n "${GHA_DATE_TAG:-}" ]]; then
   [[ "${GHA_DATE_TAG}" =~ ^[0-9]{6}$ ]] || {

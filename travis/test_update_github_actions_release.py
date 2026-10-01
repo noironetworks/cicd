@@ -2,6 +2,7 @@
 """Unit tests for the GitHub Actions legacy-stream status updater."""
 
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -9,6 +10,8 @@ import unittest
 
 
 SCRIPT = Path(__file__).with_name("update-github-actions-release.py")
+os.environ.setdefault("RELEASE_TAG", "9.9.9.9")
+os.environ.setdefault("UPSTREAM_ID", "deadbee")
 SPEC = importlib.util.spec_from_file_location("github_actions_release_updater", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 UPDATER = importlib.util.module_from_spec(SPEC)
@@ -20,8 +23,8 @@ RUN_ID = "12345"
 RUN_ATTEMPT = "2"
 RUN_NUMBER = "789"
 TIMESTAMP = "2026-08-14T10:00:00Z"
-Z_TAG = "6.1.1.7.81c2369.z"
-DATED_TAG = f"6.1.1.7.81c2369.081426.{RUN_NUMBER}"
+Z_TAG = UPDATER.TARGET_Z_TAG
+DATED_TAG = f"{UPDATER.TARGET_RELEASE}.{UPDATER.UPSTREAM_ID}.081426.{RUN_NUMBER}"
 
 
 def digests(images, offset=1):
@@ -84,13 +87,13 @@ class GithubActionsReleaseUpdaterTests(unittest.TestCase):
             "    container_images:\n"
             + "".join(entries)
             + "    last_updated: old-time\n"
-            "    release_name: 6.1.1.7.z\n"
+            f"    release_name: {UPDATER.TARGET_STREAM}\n"
             "  - acc_provision: []\n"
             "    container_images: []\n"
             "    last_updated: old-release-time\n"
-            "    release_name: 6.1.1.7\n"
+            f"    release_name: {UPDATER.TARGET_RELEASE}\n"
             "    released: false\n"
-            "  release_tag: 6.1.1.7\n"
+            f"  release_tag: {UPDATER.TARGET_RELEASE}\n"
             "- release_streams:\n"
             "  - release_name: unrelated.z\n"
             "  release_tag: unrelated\n",
@@ -118,7 +121,7 @@ class GithubActionsReleaseUpdaterTests(unittest.TestCase):
                 manifest_text(
                     UPDATER.QUAY_REGISTRY_PREFIX,
                     self.opflex.images,
-                    tags=(Z_TAG, "6.1.1.7.81c2369.gha.bad"),
+                    tags=(Z_TAG, f"{UPDATER.TARGET_RELEASE}.{UPDATER.UPSTREAM_ID}.gha.bad"),
                 ),
                 encoding="utf-8",
             )
@@ -220,7 +223,7 @@ class GithubActionsReleaseUpdaterTests(unittest.TestCase):
         with self.assertRaises(UPDATER.UpdateError):
             UPDATER.validate_build_identity(
                 Z_TAG,
-                "6.1.1.7.81c2369.gha.bad",
+                f"{UPDATER.TARGET_RELEASE}.{UPDATER.UPSTREAM_ID}.gha.bad",
                 self.aci_commit,
                 CICD_COMMIT,
                 RUN_ID,
