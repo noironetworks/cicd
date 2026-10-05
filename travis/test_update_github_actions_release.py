@@ -101,6 +101,25 @@ class GithubActionsReleaseUpdaterTests(unittest.TestCase):
         )
         return releases
 
+    def empty_releases_file(self, directory):
+        releases = Path(directory) / "releases.yaml"
+        releases.write_text(
+            "releases:\n"
+            "- release_streams:\n"
+            "  - acc_provision: []\n"
+            "    container_images: []\n"
+            "    last_updated: old-time\n"
+            f"    release_name: {UPDATER.TARGET_STREAM}\n"
+            "  - acc_provision: []\n"
+            "    container_images: []\n"
+            "    last_updated: old-release-time\n"
+            f"    release_name: {UPDATER.TARGET_RELEASE}\n"
+            "    released: false\n"
+            f"  release_tag: {UPDATER.TARGET_RELEASE}\n",
+            encoding="utf-8",
+        )
+        return releases
+
     def test_manifest_requires_z_and_dated_tags_for_every_image(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "images.tsv"
@@ -194,21 +213,29 @@ class GithubActionsReleaseUpdaterTests(unittest.TestCase):
             self.assertIn("stale-field: stale-unrelated", output)
             self.assertIn("tag: keep-acc-provision", output)
 
-    def test_missing_component_image_rejects_without_writing(self):
+    def test_empty_stream_bootstraps_opflex_then_aci_images(self):
         with tempfile.TemporaryDirectory() as directory:
-            releases = self.new_releases_file(directory)
-            malformed = releases.read_text(encoding="utf-8").replace(
-                "      name: opflex\n", "      name: some-other-image\n", 1
-            )
-            releases.write_text(malformed, encoding="utf-8")
-            with self.assertRaisesRegex(UPDATER.UpdateError, "missing expected images"):
+            releases = self.empty_releases_file(directory)
+            self.assertTrue(
                 UPDATER.merge_release(
                     releases,
                     self.opflex,
                     self.make_entries("opflex", self.opflex_commit),
                     TIMESTAMP,
                 )
-            self.assertEqual(releases.read_text(encoding="utf-8"), malformed)
+            )
+            self.assertTrue(
+                UPDATER.merge_release(
+                    releases,
+                    self.aci,
+                    self.make_entries("aci-containers", self.aci_commit),
+                    TIMESTAMP,
+                )
+            )
+            output = releases.read_text(encoding="utf-8")
+            self.assertEqual(output.count("    container_images: []"), 1)
+            for image_name in (*self.aci.images, *self.opflex.images):
+                self.assertEqual(output.count(f'name: "{image_name}"'), 1)
 
     def test_build_identity_uses_legacy_tags_and_run_number(self):
         UPDATER.validate_build_identity(
