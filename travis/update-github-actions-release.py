@@ -302,7 +302,10 @@ def find_release_stream(block: Sequence[str]) -> Tuple[int, int]:
 def find_image_entries(
     stream: Sequence[str],
 ) -> Tuple[int, int, List[Tuple[int, int, str]]]:
-    container_indices = [i for i, line in enumerate(stream) if line == CONTAINER_IMAGES_LINE]
+    container_indices = [
+        i for i, line in enumerate(stream)
+        if line in (CONTAINER_IMAGES_LINE, "    container_images: []")
+    ]
     metadata_indices = [i for i, line in enumerate(stream) if line.startswith(LAST_UPDATED_PREFIX)]
     if len(container_indices) != 1 or len(metadata_indices) != 1:
         raise UpdateError("target stream has invalid container_images or last_updated fields")
@@ -422,11 +425,7 @@ def merge_release(
     stream = list(block[stream_start:stream_end])
     container_index, metadata_index, entries = find_image_entries(stream)
     existing_names = {name for _, _, name in entries}
-    missing = set(component.images) - existing_names
-    if missing:
-        raise UpdateError(
-            f"target stream is missing expected images: {', '.join(sorted(missing))}"
-        )
+    stream[container_index] = CONTAINER_IMAGES_LINE
 
     merged_entries: List[str] = []
     for start, end, image_name in entries:
@@ -434,6 +433,9 @@ def merge_release(
             merged_entries.extend(incoming[image_name])
         else:
             merged_entries.extend(stream[start:end])
+    for image_name in component.images:
+        if image_name not in existing_names:
+            merged_entries.extend(incoming[image_name])
     stream[container_index + 1 : metadata_index] = merged_entries
     last_updated_indices = [
         index for index, line in enumerate(stream) if line.startswith(LAST_UPDATED_PREFIX)
