@@ -49,13 +49,6 @@ if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
   OTHER_IMAGE_TAGS="${RELEASE_TAG_WITH_UPSTREAM_ID},${RELEASE_TAG_WITH_UPSTREAM_ID}.${GHA_DATE_TAG}.${TRAVIS_BUILD_NUMBER}"
 fi
 
-if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
-  mkdir -p "${CI_ARTIFACT_DIR}"
-  printf 'image\tdigest\n' > "${CI_ARTIFACT_DIR}/quay-published-images.tsv"
-  printf 'image\tdigest\n' > "${CI_ARTIFACT_DIR}/quay-noiro-published-images.tsv"
-  printf 'image\tdigest\n' > "${CI_ARTIFACT_DIR}/docker-published-images.tsv"
-fi
-
 rm -f \
   dist-static/iptables-bin.tar.gz \
   dist-static/iptables-libs.tar.gz \
@@ -108,13 +101,13 @@ ALL_IMAGES=("aci-containers-host" "aci-containers-controller" "cnideploy" "aci-c
 for IMAGE in "${ALL_IMAGES[@]}"; do
   if [[ "${IMAGE}" != "openvswitch" ]]; then
     $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${ACI_BASE_IMAGE}"
-    if [[ "${GITHUB_ACTIONS:-false}" != "true" && "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+    if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
       IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
       $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${ACI_BASE_IMAGE}"
     fi
   else
     $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${OVS_BASE_IMAGE}"
-    if [[ "${GITHUB_ACTIONS:-false}" != "true" && "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+    if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
       IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
       $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${OVS_BASE_IMAGE}"
     fi

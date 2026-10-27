@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import copy
+import json
 import os
 import re
 import sys
@@ -26,21 +27,21 @@ pacific_time = pytz.timezone('US/Pacific')
 
 
 def pull_image_and_get_sha(image_name_and_tag):
-    try:
-        subprocess.check_output(['docker', 'pull', image_name_and_tag], universal_newlines=True)      
-    except subprocess.CalledProcessError as e:
-        print("Error:", e)
-        return "error"
+    subprocess.check_output(['docker', 'pull', image_name_and_tag], universal_newlines=True)
     return get_repo_digest_sha(image_name_and_tag)
 
 def get_repo_digest_sha(image_name_and_tag):
-    try:
-        result = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{index (split (index .RepoDigests 0) "@sha256:") 1}}', image_name_and_tag], universal_newlines=True)
-    except subprocess.CalledProcessError as e:
-        # Handle any errors that occur during the subprocess execution
-        print("Error:", e)
-        return "error"
-    return result.strip()
+    result = subprocess.check_output(
+        ['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', image_name_and_tag],
+        universal_newlines=True,
+    )
+    repository = image_name_and_tag.rsplit(":", 1)[0]
+    repository = repository.removeprefix("docker.io/")
+    for repo_digest in json.loads(result) or []:
+        name, digest = repo_digest.split("@", 1)
+        if name.removeprefix("docker.io/") == repository and re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            return digest.removeprefix("sha256:")
+    raise RuntimeError(f"No repository digest found for {image_name_and_tag}")
 
 def pull_get_image_id_sha(image_name_and_tag):
     try:
