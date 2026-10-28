@@ -72,21 +72,12 @@ else
   fi
 fi
 
-if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
-  mkdir -p "${CI_ARTIFACT_DIR}"
-  printf 'image\tdigest\n' > "${CI_ARTIFACT_DIR}/quay-published-images.tsv"
-  printf 'image\tdigest\n' > "${CI_ARTIFACT_DIR}/quay-noiro-published-images.tsv"
-  printf 'image\tdigest\n' > "${CI_ARTIFACT_DIR}/docker-published-images.tsv"
-fi
-
 docker/travis/build-opflex-travis.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE_BUILD_TAG}"
 docker images
 
 #Fetching Base Image - Common base image for every container so fetching once
 BASE_IMAGE=$(grep -E '^FROM' docker/travis/Dockerfile-opflex | awk '{print $2}')
-if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
-  docker pull "${BASE_IMAGE}"
-fi
+docker pull "${BASE_IMAGE}"
 docker images
 
 
@@ -96,18 +87,12 @@ if [[ "${BUILD_BASE}" == true ]]; then
     "$SCRIPTS_DIR/push-images.sh" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_IMAGE}"
   done
 else
-  if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
-    # opflex-build is an intermediate image used only while assembling the
-    # runtime image. The published OpFlex artifacts are build-base and opflex.
-    ALL_IMAGES=("opflex")
-  else
-    ALL_IMAGES=("opflex-build" "opflex")
-  fi
+  ALL_IMAGES=("opflex-build" "opflex")
   for IMAGE in "${ALL_IMAGES[@]}"; do
     "$SCRIPTS_DIR/push-images.sh" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_IMAGE}"
   done
 
-  if [[ "${GITHUB_ACTIONS:-false}" != "true" && "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+  if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
     IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
     "$SCRIPTS_DIR/push-to-cicd-status.sh" "${QUAY_NOIRO_REGISTRY}" opflex "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_IMAGE}"
   fi

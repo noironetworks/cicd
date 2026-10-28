@@ -1,12 +1,10 @@
 #!/bin/bash
+set -Eeuo pipefail
 if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
     set -x
 fi
-SCRIPTS_DIR=$(dirname ${BASH_SOURCE[0]})
+SCRIPTS_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPTS_DIR/globals.sh"
-
-# Get the current branch name
-current_branch=$(git rev-parse --abbrev-ref HEAD)
 
 if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
     IMAGE_BUILD_REGISTRY=$1
@@ -23,143 +21,108 @@ else
 fi
 
 GIT_REPO=${CICD_STATUS_REPO}
-GIT_LOCAL_DIR=${CICD_STATUS_REPO_DIR}
 GIT_BRANCH="main"
-GIT_EMAIL="test@cisco.com"
-GIT_TOKEN=${TRAVIS_TAGGER}
 GIT_USER="travis-tagger"
+: "${TRAVIS_TAGGER:?TRAVIS_TAGGER is required}"
 
-write_acc_provision_build_log() {
+STATUS_WORK_DIR=$(mktemp -d /tmp/cicd-status-publish.XXXXXXXX)
+trap 'rm -rf -- "${STATUS_WORK_DIR}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cat > "${STATUS_WORK_DIR}/git-askpass.sh" <<'ASKPASS'
+#!/bin/bash
+case "$1" in
+    *Username*) printf '%s\n' 'x-access-token' ;;
+    *Password*) printf '%s\n' "${TRAVIS_TAGGER:?}" ;;
+    *) exit 1 ;;
+esac
+ASKPASS
+chmod 700 "${STATUS_WORK_DIR}/git-askpass.sh"
+export GIT_ASKPASS="${STATUS_WORK_DIR}/git-askpass.sh"
+export GIT_TERMINAL_PROMPT=0
+
+write_build_log() {
     local destination=$1
     if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
         {
-            printf 'GitHub Actions run: %s\n' "${TRAVIS_JOB_WEB_URL:-${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}}"
+            printf 'GitHub Actions run: %s\n' "${TRAVIS_JOB_WEB_URL}"
             printf 'Source commit: %s\n' "${TRAVIS_COMMIT}"
             printf 'Trigger tag: %s\n' "${TRAVIS_TAG}"
         } > "${destination}"
     else
-        curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > "${destination}"
+        curl --fail --show-error --silent \
+            "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > "${destination}"
         sed -i '/X-Amz-.*=\([^&]*\)&/d' "${destination}"
     fi
 }
 
-git_clone_repo() {
-    cd /tmp/ || exit
-    git clone "${GIT_REPO/:\/\//://$GIT_USER:$GIT_TOKEN@}" -b "${GIT_BRANCH}" "${GIT_LOCAL_DIR}"
-    cd /tmp/"${GIT_LOCAL_DIR}" || exit
-    git remote set-url origin "${GIT_REPO/:\/\//://$GIT_USER:$GIT_TOKEN@}"
-}
-
-add_artifacts() {
-    cd /tmp/"${GIT_LOCAL_DIR}" || exit
-    git pull --rebase origin ${GIT_BRANCH}
-    mkdir -p /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}" 2> /dev/null
-    curl "https://api.travis-ci.com/v3/job/${TRAVIS_JOB_ID}/log.txt" > /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
-    sed -i '/X-Amz-.*=\([^&]*\)&/d' /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-buildlog.txt
-    cp /tmp/sbom.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-sbom.txt
-    cp /tmp/cve.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
-    cp /tmp/cve-base.txt /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve-base.txt
-}
-
-add_trivy_vulnerabilites() {
-    trivy image ${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG} >> /tmp/"${GIT_LOCAL_DIR}"/docs/release_artifacts/"${RELEASE_TAG}"/z/"${IMAGE}"/"${RELEASE_TAG}"-cve.txt
-}
-
-update_container_release() {
-
-    # Removing local docker image to clear local REPO_DIGEST history. Will be fetching latest digest from upstream
-    docker rmi -f "${IMAGE_SHA}"
-    python $SCRIPTS_DIR/update-release.py "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
-}
-
-add_acc_provision_artifacts() {
-    cd /tmp/"${GIT_LOCAL_DIR}" || exit
-    git pull --rebase origin ${GIT_BRANCH}
-    mkdir -p $1 2> /dev/null
-    if [[ ${TWINE_UPLOAD} == "true" ]]; then
-        echo "uploading buildlog"
-        write_acc_provision_build_log "$1/${RELEASE_TAG}-buildlog.txt"
-    fi
-}
-
-update_acc_provision_release() {
-    python $SCRIPTS_DIR/update-release.py "${PYPI_REGISTRY}" "${TAG_NAME}" "${IS_RELEASE}"
-}
-
-git_add_commit_push() {
-    cd /tmp/"${GIT_LOCAL_DIR}" || exit
-    git config --local user.email "${GIT_EMAIL}"
-    git config --local user.name "${GIT_USER}"
-    git stash
-    git pull --rebase origin ${GIT_BRANCH}
-    if ! git stash pop; then
-        echo "Error: Failed to apply stash."
-        return 1  # Return failure status
-    fi
-    git add .
-    if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        DOCKER_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 0) "@sha256:") 1}}' ${DOCKER_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
-        QUAY_REPO_DIGEST_SHA=$(docker image inspect --format '{{index (split (index .RepoDigests 1) "@sha256:") 1}}' ${QUAY_NOIRO_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG})
-        git commit -a -m "${RELEASE_Z_TAG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" -m "ImageId: ${IMAGE_SHA}" -m "DockerSha: ${DOCKER_REPO_DIGEST_SHA}" -m "QuaySha: ${QUAY_REPO_DIGEST_SHA}"
-    else
+TG=${RELEASE_Z_TAG}
+if [[ ${TRAVIS_REPO_SLUG##*/} == "acc-provision" ]]; then
+    STREAM=z
+    if [[ "${IS_RELEASE}" == "true" ]]; then
+        STREAM=r
         TG=${RELEASE_TAG}
-        if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
-            RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
-            TG=${RELEASE_TAG}rc${RC_NUM}
-        elif [[ ${IS_RELEASE} == "false" ]] ; then
-            TG=${RELEASE_Z_TAG}
-        fi
-        git commit -a -m "${TG}-${TRAVIS_REPO_SLUG##*/}-${TRAVIS_BUILD_NUMBER}-$(date '+%F_%H:%M:%S')" -m "Commit: ${TRAVIS_COMMIT}" -m "Tag: ${TAG_NAME}"
+    elif [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
+        RC_NUM=${TRAVIS_TAG#"$RC_PREFIX"}
+        STREAM=rc${RC_NUM}
+        TG=${RELEASE_TAG}rc${RC_NUM}
     fi
-    git push origin ${GIT_BRANCH}
-}
-
-
-if ! git_clone_repo; then
-    exit 1
+    COMMIT_MESSAGE="${TG}-acc-provision-${TRAVIS_BUILD_NUMBER}"
+else
+    COMMIT_MESSAGE="${TG}-${IMAGE}-${TRAVIS_BUILD_NUMBER}"
 fi
 
-while true; do
+# Reapply this result to a fresh checkout if another component publishes first.
+for attempt in 1 2 3; do
+    export CICD_STATUS_REPO_DIR="${STATUS_WORK_DIR##*/}/attempt-${attempt}"
+    repository_dir="/tmp/${CICD_STATUS_REPO_DIR}"
+    git -c credential.helper= clone --quiet --single-branch --branch "${GIT_BRANCH}" \
+        "${GIT_REPO}" "${repository_dir}"
+    cd "${repository_dir}"
+    original_head=$(git rev-parse HEAD)
+
     if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
-        if ! add_artifacts; then
-            exit 1
-        fi
-
-        if ! update_container_release; then
-            exit 1
-        fi
-
+        artifact_dir="docs/release_artifacts/${RELEASE_TAG}/z/${IMAGE}"
+        mkdir -p "${artifact_dir}"
+        write_build_log "${artifact_dir}/${RELEASE_TAG}-buildlog.txt"
+        cp /tmp/sbom.txt "${artifact_dir}/${RELEASE_TAG}-sbom.txt"
+        cp /tmp/cve.txt "${artifact_dir}/${RELEASE_TAG}-cve.txt"
+        cp /tmp/cve-base.txt "${artifact_dir}/${RELEASE_TAG}-cve-base.txt"
+        python3 "$SCRIPTS_DIR/update-release.py" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" \
+            "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" \
+            "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"
         if [[ ${TRAVIS_REPO_SLUG##*/} != "opflex" ]]; then
-            if ! add_trivy_vulnerabilites; then
-                exit 1
-            fi
+            trivy image "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_Z_TAG}" \
+                >> "${artifact_dir}/${RELEASE_TAG}-cve.txt"
         fi
     else
-        DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/z/${TRAVIS_REPO_SLUG##*/}"
-        if [[ "${IS_RELEASE}" == "true" ]]; then
-            DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/r/${TRAVIS_REPO_SLUG##*/}"
-        elif [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
-            RC_NUM=$(echo "$TRAVIS_TAG" | sed "s/${RC_PREFIX}//")
-            DIR="/tmp/${GIT_LOCAL_DIR}/docs/release_artifacts/${RELEASE_TAG}/rc${RC_NUM}/${TRAVIS_REPO_SLUG##*/}"
+        artifact_dir="docs/release_artifacts/${RELEASE_TAG}/${STREAM}/acc-provision"
+        mkdir -p "${artifact_dir}"
+        if [[ "${TWINE_UPLOAD}" == "true" ]]; then
+            write_build_log "${artifact_dir}/${RELEASE_TAG}-buildlog.txt"
         fi
-
-        if ! add_acc_provision_artifacts $DIR; then
-            exit 1
-        fi
-
-        if ! update_acc_provision_release; then
-            exit 1
-        fi
-
+        python3 "$SCRIPTS_DIR/update-release.py" "${PYPI_REGISTRY}" "${TAG_NAME}" "${IS_RELEASE}"
     fi
 
-
-    if git_add_commit_push; then
-        break  # Exit the loop if git_add_commit_push succeeds
+    git config user.email "test@cisco.com"
+    git config user.name "${GIT_USER}"
+    git add -- docs/release_artifacts
+    if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
+        git commit --quiet -m "${COMMIT_MESSAGE}-$(date '+%F_%H:%M:%S')" \
+            -m "Commit: ${TRAVIS_COMMIT}" \
+            -m "Tags: ${IMAGE_Z_TAG}, ${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" \
+            -m "ImageId: ${IMAGE_SHA}"
     else
-        # Handle the case when git_add_commit_push fails (e.g., stash pop failed). Resetting and recalculating
-        git checkout .
-        git pull --rebase origin ${GIT_BRANCH}
-        echo "Retrying git_add_commit_push after stash pop failure..."
+        git commit --quiet -m "${COMMIT_MESSAGE}-$(date '+%F_%H:%M:%S')" \
+            -m "Commit: ${TRAVIS_COMMIT}" -m "Tag: ${TAG_NAME}"
     fi
+    if git -c credential.helper= push origin "HEAD:${GIT_BRANCH}"; then
+        exit 0
+    fi
+    remote_head=$(git -c credential.helper= ls-remote origin "refs/heads/${GIT_BRANCH}" | cut -f1)
+    if [[ "${remote_head}" == "${original_head}" || "${attempt}" == 3 ]]; then
+        echo "Error: CICD status push failed (attempt ${attempt})." >&2
+        exit 1
+    fi
+    echo "CICD status advanced concurrently; retrying publication (${attempt}/3)." >&2
 done
