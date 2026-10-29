@@ -65,6 +65,11 @@ for OTHER_TAG in ${OTHER_IMAGE_TAGS}; do
   docker push "${QUAY_REGISTRY}/${IMAGE}:${OTHER_TAG}"
 done
 
+if [[ "${IMAGE}" == "opflex-build" ]]; then
+  echo "Published opflex-build to ${QUAY_REGISTRY}; skipping Quay Noiro and Docker Hub publication."
+  exit 0
+fi
+
 if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
   docker login -u="$QUAY_TRAVIS_NOIRO_ROBO_USER" -p="$QUAY_TRAVIS_NOIRO_ROBO_PSWD" quay.io
 fi
