@@ -1,5 +1,7 @@
 #!/bin/bash
-set -x
+if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
+    set -x
+fi
 SCRIPTS_DIR=$(dirname ${BASH_SOURCE[0]})
 source "$SCRIPTS_DIR/globals.sh"
 
@@ -7,6 +9,13 @@ TEST_PYPI_RELEASE_HINT="release to test.pypi.org"
 PYPI_RELEASE_HINT="release to pypi.org"
 TEST_PYPI_RELEASE=$(git show -s --format=%B ${TRAVIS_TAG} | grep -i "${TEST_PYPI_RELEASE_HINT}")
 PYPI_RELEASE=$(git show -s --format=%B  ${TRAVIS_TAG} | grep -i "${PYPI_RELEASE_HINT}")
+
+push_cicd_status_if_enabled() {
+    if [[ "${SKIP_CICD_STATUS:-false}" == "true" ]]; then
+        return 0
+    fi
+    "$SCRIPTS_DIR/push-to-cicd-status.sh" "$@"
+}
 
 if [[ (-z "$TEST_PYPI_RELEASE") && (-z "$PYPI_RELEASE") ]] ; then
     echo "To push to pypi, include ${TEST_PYPI_RELEASE_HINT} or ${PYPI_RELEASE_HINT} in git tag message, exiting"
@@ -26,45 +35,59 @@ fi
 pushd provision
 python setup.py --description
 
-WHEEL_NAME="acc_provision-${TRAVIS_TAG}.tar.gz"
-TAG_NAME="${TRAVIS_TAG}"
-DEV_WHEEL_NAME="acc_provision-${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}.tar.gz"
-DEV_TAG_NAME="${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}"
+PACKAGE_VERSION="${TRAVIS_TAG}"
+WHEEL_NAME="acc_provision-${PACKAGE_VERSION}.tar.gz"
+TAG_NAME="${PACKAGE_VERSION}"
+DEV_PACKAGE_VERSION="${PACKAGE_VERSION}.dev${TRAVIS_BUILD_NUMBER}"
+DEV_WHEEL_NAME="acc_provision-${DEV_PACKAGE_VERSION}.tar.gz"
+DEV_TAG_NAME="${DEV_PACKAGE_VERSION}"
 TWINE_UPLOAD="true"
 
 if [ -n "$PYPI_RELEASE" ] ; then
-    #twine upload --repository-url https://pypi.org/legacy/ -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
     python setup.py sdist
-    twine upload -u ${PYPI_USER} -p ${PYPI_PASS} dist/$WHEEL_NAME
-    if [ $? -ne 0 ]; then
-        TWINE_UPLOAD="false"
+    python3 -m twine check "dist/${WHEEL_NAME}" || exit 1
+    if ! TWINE_USERNAME="${PYPI_USER}" TWINE_PASSWORD="${PYPI_PASS}" \
+        python3 -m twine upload --non-interactive "dist/${WHEEL_NAME}"; then
+        echo "PyPI upload failed; CICD release status was not changed." >&2
+        exit 1
     fi
     IS_RELEASE="true"
     if [[ "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
         IS_RELEASE="false"
     fi
-    $SCRIPTS_DIR/push-to-cicd-status.sh "https://pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" ${IS_RELEASE} ${TWINE_UPLOAD}
+    push_cicd_status_if_enabled \
+        "https://pypi.org/project/acc-provision/${TAG_NAME}/#files" \
+        "${TAG_NAME}" "${IS_RELEASE}" "${TWINE_UPLOAD}" || exit 1
 
 elif [ -n "$TEST_PYPI_RELEASE" ]; then
     if [[ "$TRAVIS_BUILD_USER" == "noiro-tagger" || "$TRAVIS_BUILD_USER" == "noiro-generic" ]]; then
-        #twine upload --repository-url https://test.pypi.org/legacy/ -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
-        VERSION=${TRAVIS_TAG}
-        OVERRIDE_VERSION=${TRAVIS_TAG}.dev${TRAVIS_BUILD_NUMBER}
+        VERSION=${PACKAGE_VERSION}
+        OVERRIDE_VERSION=${DEV_PACKAGE_VERSION}
         sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
         sed -i "s/${UPSTREAM_IMAGE_TAG}.*$/${UPSTREAM_IMAGE_Z_TAG}/" acc_provision/versions.yaml
         python setup.py sdist
-        twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$DEV_WHEEL_NAME
-        if [ $? -ne 0 ]; then
-            TWINE_UPLOAD="false"
+        python3 -m twine check "dist/${DEV_WHEEL_NAME}" || exit 1
+        if ! TWINE_USERNAME="${TEST_PYPI_USER}" TWINE_PASSWORD="${TEST_PYPI_PASS}" \
+            python3 -m twine upload --non-interactive --repository testpypi \
+            "dist/${DEV_WHEEL_NAME}"; then
+            echo "TestPyPI upload failed; CICD release status was not changed." >&2
+            exit 1
         fi
-        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${OVERRIDE_VERSION}"/#files" "${DEV_TAG_NAME}" "false" ${TWINE_UPLOAD}
+        push_cicd_status_if_enabled \
+            "https://test.pypi.org/project/acc-provision/${OVERRIDE_VERSION}/#files" \
+            "${DEV_TAG_NAME}" "false" "${TWINE_UPLOAD}" || exit 1
     elif [ -n "$SIGNED_EMAIL" ]; then
         python setup.py sdist
-        twine upload --repository testpypi -u ${TEST_PYPI_USER} -p ${TEST_PYPI_PASS} dist/$WHEEL_NAME
-        if [ $? -ne 0 ]; then
-            TWINE_UPLOAD="false"
+        python3 -m twine check "dist/${WHEEL_NAME}" || exit 1
+        if ! TWINE_USERNAME="${TEST_PYPI_USER}" TWINE_PASSWORD="${TEST_PYPI_PASS}" \
+            python3 -m twine upload --non-interactive --repository testpypi \
+            "dist/${WHEEL_NAME}"; then
+            echo "TestPyPI upload failed; CICD release status was not changed." >&2
+            exit 1
         fi
-        $SCRIPTS_DIR/push-to-cicd-status.sh "https://test.pypi.org/project/acc-provision/"${TRAVIS_TAG}"/#files" "${TAG_NAME}" "false" ${TWINE_UPLOAD}
+        push_cicd_status_if_enabled \
+            "https://test.pypi.org/project/acc-provision/${TAG_NAME}/#files" \
+            "${TAG_NAME}" "false" "${TWINE_UPLOAD}" || exit 1
     fi
 fi
 

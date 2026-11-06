@@ -6,6 +6,9 @@ source "$SCRIPTS_DIR/globals.sh"
 pushd provision
 VERSION=`python3 setup.py --version`
 OVERRIDE_VERSION=${TRAVIS_TAG}
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && ! "$TRAVIS_TAG" =~ $RC_REGEX ]]; then
+    OVERRIDE_VERSION=${RELEASE_TAG}
+fi
 sed -i "s/${VERSION}/${OVERRIDE_VERSION}/" setup.py
 if [[ "$TRAVIS_TAG" = "$RELEASE_TAG" ]]; then
     echo "Travis tag matches release tag ${RELEASE_TAG}, preserving image tags in versions.yaml"
