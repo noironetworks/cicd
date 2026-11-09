@@ -87,6 +87,24 @@ if [[ "${BUILD_BASE}" == true ]]; then
     "$SCRIPTS_DIR/push-images.sh" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_IMAGE}"
   done
 else
+  if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+    : "${EXPECTED_OPFLEX_BASE_DIGEST:?EXPECTED_OPFLEX_BASE_DIGEST is required for runtime phase validation}"
+    # Validate the base image digest before building on top of it
+    # Pull the image to ensure it's available locally
+    docker pull "${IMAGE_BUILD_REGISTRY}/opflex-build-base:${IMAGE_BUILD_TAG}"
+    actual_digest=$(docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' \
+      "${IMAGE_BUILD_REGISTRY}/opflex-build-base:${IMAGE_BUILD_TAG}" \
+      | sed -n "s|^${IMAGE_BUILD_REGISTRY}/opflex-build-base@||p")
+    [[ "${actual_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+      echo "::error::Cannot resolve opflex-build-base digest" >&2
+      exit 1
+    }
+    [[ "${actual_digest}" == "${EXPECTED_OPFLEX_BASE_DIGEST}" ]] || {
+      echo "::error::Base image digest mismatch: expected ${EXPECTED_OPFLEX_BASE_DIGEST}, got ${actual_digest}" >&2
+      exit 1
+    }
+  fi
+
   ALL_IMAGES=("opflex-build" "opflex")
   for IMAGE in "${ALL_IMAGES[@]}"; do
     "$SCRIPTS_DIR/push-images.sh" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_IMAGE}"
@@ -94,6 +112,8 @@ else
 
   if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
     IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
-    "$SCRIPTS_DIR/push-to-cicd-status.sh" "${QUAY_NOIRO_REGISTRY}" opflex "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_IMAGE}"
+    "$SCRIPTS_DIR/push-to-cicd-status.sh" "${QUAY_NOIRO_REGISTRY}" opflex "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_IMAGE}" || {
+      echo "WARNING: Failed to publish status for opflex, but image push succeeded - continuing"
+    }
   fi
 fi
