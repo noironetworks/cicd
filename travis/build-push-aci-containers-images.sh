@@ -94,22 +94,38 @@ docker images
 
 # Note: opflex images come from their respective repos
 ALL_IMAGES=("aci-containers-host" "aci-containers-controller" "cnideploy" "aci-containers-operator" "openvswitch" "aci-containers-webhook" "aci-containers-certmanager" "aci-containers-host-ovscni")
+
+# For GitHub Actions: prepare metadata file for separate status publication step
+# For Travis: status calls remain inline in loop (backward compatibility)
+if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  IMAGES_METADATA_FILE="${CI_ARTIFACT_DIR}/aci-images-metadata.jsonl"
+  rm -f "$IMAGES_METADATA_FILE"
+fi
+
 for IMAGE in "${ALL_IMAGES[@]}"; do
   if [[ "${IMAGE}" != "openvswitch" ]]; then
     $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${ACI_BASE_IMAGE}"
-    if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
-      IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
-      $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${ACI_BASE_IMAGE}" || {
-        echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
-      }
+    IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
+    if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+      printf '%s\n' "{\"image\":\"${IMAGE}\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${ACI_BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
+    else
+      if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+        $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${ACI_BASE_IMAGE}" || {
+          echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
+        }
+      fi
     fi
   else
     $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${OVS_BASE_IMAGE}"
-    if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
-      IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
-      $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${OVS_BASE_IMAGE}" || {
-        echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
-      }
+    IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
+    if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+      printf '%s\n' "{\"image\":\"${IMAGE}\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${OVS_BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
+    else
+      if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+        $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${OVS_BASE_IMAGE}" || {
+          echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
+        }
+      fi
     fi
   fi
 done

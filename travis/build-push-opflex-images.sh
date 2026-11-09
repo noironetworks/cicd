@@ -110,10 +110,17 @@ else
     "$SCRIPTS_DIR/push-images.sh" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_IMAGE}"
   done
 
-  if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
-    IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
-    "$SCRIPTS_DIR/push-to-cicd-status.sh" "${QUAY_NOIRO_REGISTRY}" opflex "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_IMAGE}" || {
-      echo "WARNING: Failed to publish status for opflex, but image push succeeded - continuing"
-    }
+  IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/opflex:${IMAGE_BUILD_TAG}")
+  if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+    # For GitHub Actions: write metadata for separate status publication step
+    IMAGES_METADATA_FILE="${CI_ARTIFACT_DIR}/opflex-images-metadata.jsonl"
+    printf '%s\n' "{\"image\":\"opflex\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
+  else
+    # For Travis: call status endpoint directly (backward compatibility)
+    if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+      "$SCRIPTS_DIR/push-to-cicd-status.sh" "${QUAY_NOIRO_REGISTRY}" opflex "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_IMAGE}" || {
+        echo "WARNING: Failed to publish status for opflex, but image push succeeded - continuing"
+      }
+    fi
   fi
 fi
