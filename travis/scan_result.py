@@ -78,21 +78,37 @@ def parse_counts(raw, scanner, expected_digest):
     if scanner == "grype":
         if not isinstance(data.get("matches"), list):
             raise ValueError("missing Grype matches array")
-        target = data.get("source", {}).get("target", {})
+        source = data.get("source")
+        if not isinstance(source, dict):
+            raise ValueError("invalid Grype source object")
+        target = source.get("target")
         if not isinstance(target, dict) or target.get("imageID") != expected_digest:
             raise ValueError("Grype target digest mismatch")
-        vulnerabilities = [item["vulnerability"]["severity"] for item in data["matches"]]
+        vulnerabilities = []
+        for item in data["matches"]:
+            if not isinstance(item, dict) or not isinstance(item.get("vulnerability"), dict):
+                raise ValueError("invalid Grype vulnerability object")
+            value = item["vulnerability"].get("severity")
+            if not isinstance(value, str):
+                raise ValueError("invalid Grype severity value")
+            vulnerabilities.append(value)
     elif scanner == "trivy":
         if data.get("SchemaVersion") != 2 or not isinstance(data.get("Results"), list):
             raise ValueError("missing Trivy result schema")
-        if data.get("Metadata", {}).get("ImageID") != expected_digest:
+        metadata = data.get("Metadata")
+        if not isinstance(metadata, dict) or metadata.get("ImageID") != expected_digest:
             raise ValueError("Trivy target digest mismatch")
         vulnerabilities = []
         for result in data["Results"]:
+            if not isinstance(result, dict):
+                raise ValueError("invalid Trivy result object")
             values = result.get("Vulnerabilities", [])
             if not isinstance(values, list):
                 raise ValueError("invalid Trivy vulnerabilities")
-            vulnerabilities.extend(item["Severity"].title() for item in values)
+            for item in values:
+                if not isinstance(item, dict) or not isinstance(item.get("Severity"), str):
+                    raise ValueError("invalid Trivy vulnerability object")
+                vulnerabilities.append(item["Severity"].title())
     else:
         raise ValueError("unsupported scanner schema")
     for value in vulnerabilities:
@@ -178,7 +194,7 @@ def scan(tools, scanner, reference, digest, output, timeout=600):
         state, reason = "error", "scanner-timeout"
     except subprocess.CalledProcessError:
         state, reason = "error", "scanner-execution-failed"
-    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, tarfile.TarError):
         state, reason = "unavailable" if not output.exists() else "error", "scanner-install-or-report-invalid"
     if not output.exists():
         output.write_text(json.dumps({"state": state, "reason": reason}) + "\n")
