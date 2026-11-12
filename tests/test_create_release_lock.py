@@ -58,7 +58,7 @@ class CreateReleaseLockIntegration(unittest.TestCase):
                                  run_url=f'https://github.com/{repository}/actions/runs/{run_id}',
                                  trigger_tag=release, upstream_id=UPSTREAM)
         builder = ci_evidence.Builder(args, 'images', release + '.z', 'z')
-        if repository == 'noironetworks/opflex':
+        if repository in ('noironetworks/opflex', 'noironetworks/aci-containers'):
             builder.manifest['build_inputs'] = [{'role': 'opflex-build-base',
                 'reference': 'quay.io/noirolabs/opflex-build-base@sha256:' + 'f' * 64,
                 'digest': 'sha256:' + 'f' * 64, 'image_id': 'sha256:' + 'e' * 64,
