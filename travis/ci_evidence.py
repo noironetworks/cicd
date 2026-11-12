@@ -145,6 +145,19 @@ def validate_observation(value):
         raise EvidenceError("failed scan may not contain current counts")
 
 
+def report_counts(text):
+    """Read known report formats without turning unavailable data into zero."""
+    counts = legacy_counts(text)
+    if counts is not None:
+        return counts
+    try:
+        payload = json.loads(text)
+        validate_observation(payload)
+        return payload["counts"] if payload["state"] == "ok" else None
+    except (ValueError, KeyError, TypeError, EvidenceError):
+        return None
+
+
 def identity(args):
     for key in ("release_tag", "trigger_tag", "upstream_id", "run_id"):
         valid_name(getattr(args, key), key)
@@ -508,7 +521,11 @@ def prepare_package(args):
                         else:
                             record.pop("severity", None)
                     else:
-                        record["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve.txt").read_text())
+                        counts = report_counts(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve.txt").read_text(errors="replace"))
+                        if counts is None:
+                            record.pop("severity", None)
+                        else:
+                            record["severity"] = [counts]
                     record["severity_type"] = "grype"
                     for field in ("cve_error", "severity_link"):
                         record.pop(field, None)
@@ -522,15 +539,7 @@ def prepare_package(args):
                     if not any(item["path"] == original_destination for item in builder.manifest["files"]):
                         builder.add(original_path, original_destination)
                     original_text = original_path.read_text(errors="replace")
-                    original_counts = legacy_counts(original_text)
-                    if original_counts is None:
-                        try:
-                            payload = json.loads(original_text)
-                            validate_observation(payload)
-                            if payload["state"] == "ok":
-                                original_counts = payload["counts"]
-                        except (ValueError, KeyError, TypeError, EvidenceError):
-                            pass
+                    original_counts = report_counts(original_text)
                     original_base = {"cve": new_prefix + args.release_tag + "-cve-base-original.txt",
                                      "severity_type": "grype" if original_counts is not None else "unknown", "date-and-time": builder.manifest["prepared_at"]}
                     if record["base-image"][0].get("sha"):
@@ -641,6 +650,9 @@ def validate_bundle(root):
         if digest_file(artifact) != expected["sha256"] or artifact.stat().st_size != expected["size"]:
             raise EvidenceError("retained package differs from prepared identity")
         for package in manifest["package"]:
+            if package.get("commit") != [{"sha": manifest["source"]["sha"],
+                                          "link": f"https://github.com/{manifest['source']['repository']}/commit/{manifest['source']['sha']}"}]:
+                raise EvidenceError("package record source differs from bundle source")
             if package["tag"] != expected["version"]:
                 raise EvidenceError("package record version mismatch")
             validate_package_link(package["link"], expected["version"], expected["index"])
