@@ -43,9 +43,9 @@ def clean_environment():
             and not re.search(r"TOKEN|PASSWORD|PASSWD|PSWD|(?:^|_)PASS(?:$|_)|SECRET|TAGGER|ASKPASS", k, re.I)}
 
 
-def run(command, *, cwd=None, env=None, timeout=TIMEOUT):
+def run(command, *, cwd=None, env=None, timeout=TIMEOUT, binary=False):
     try:
-        return subprocess.run(command, cwd=cwd, env=env, check=True, text=True,
+        return subprocess.run(command, cwd=cwd, env=env, check=True, text=not binary,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=timeout).stdout
     except subprocess.TimeoutExpired as exc:
@@ -141,7 +141,17 @@ class Builder:
         self.manifest = {"schema_version": SCHEMA_VERSION, "kind": kind,
                          "release_tag": args.release_tag, "stream": stream,
                          "directory": directory, "prepared_at": now(),
-                         **identity(args), "records": [], "observations": [], "images": [], "files": []}
+                         **identity(args), "records": [], "observations": [], "images": [], "files": [], "retained_files": []}
+
+    def retain(self, source):
+        name = valid_name(Path(source).name, "retained artifact filename")
+        if Path(source).is_symlink() or not Path(source).is_file():
+            raise EvidenceError("retained artifact must be a regular file")
+        destination = self.temp / "retained" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        self.manifest["retained_files"].append({"path": "retained/" + name, "sha256": digest_file(destination),
+                                                 "size": destination.stat().st_size})
 
     def add(self, source, destination):
         relative_path(destination)
@@ -307,9 +317,8 @@ def historical_artifacts(checkout, image, release, digest):
             raise EvidenceError("historical symlink artifacts are not permitted")
         target = directory / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Artifact text is UTF-8 in the status repository.
-        target.write_text(run(["git", "show", f"{commits[0]}:{name}"], cwd=checkout,
-                              env=clean_environment()), encoding="utf-8")
+        target.write_bytes(run(["git", "show", f"{commits[0]}:{name}"], cwd=checkout,
+                               env=clean_environment(), binary=True))
     historical_status = directory / "docs/release_artifacts/releases.yaml"
     historical_status.parent.mkdir(parents=True, exist_ok=True)
     historical_status.write_text(run(["git", "show", commits[0] + ":docs/release_artifacts/releases.yaml"],
@@ -331,7 +340,7 @@ def prepare_package(args):
         prefix = f"release_artifacts/{args.release_tag}/{directory}/acc-provision/{args.release_tag}"
         artifact = Path(args.artifact)
         valid_name(artifact.name, "package filename")
-        builder.add(artifact, f"docs/release_artifacts/{args.release_tag}/{directory}/acc-provision/{artifact.name}")
+        builder.retain(artifact)
         log = Path(args.build_log) if args.build_log else generated_log(args, builder.temp)
         builder.add(log, "docs/" + prefix + "-buildlog.txt")
         builder.manifest["package"] = [{"link": args.registry, "tag": args.version,
@@ -365,9 +374,14 @@ def prepare_package(args):
                         image = copy.deepcopy(next(item for item in historical_stream["container_images"] if item["name"] == name))
                     old_prefix = f"release_artifacts/{args.release_tag}/z/{name}/"
                     new_prefix = f"release_artifacts/{args.release_tag}/{directory}/{name}/"
-                    for report in ("sbom", "cve", "cve-base", "buildlog"):
-                        filename = f"{args.release_tag}-{report}.txt"
-                        builder.add(local_file(origin, "docs/" + old_prefix + filename), "docs/" + new_prefix + filename)
+                    # Preserve every historical byte, including Quay JSON,
+                    # provenance SHA files and CR/non-UTF-8 Travis logs.
+                    artifact_root = origin / "docs" / old_prefix
+                    for source in sorted(artifact_root.rglob("*")):
+                        if source.is_symlink():
+                            raise EvidenceError("symlink release artifact is prohibited")
+                        if source.is_file():
+                            builder.add(source, "docs/" + new_prefix + source.relative_to(artifact_root).as_posix())
                     record = {k: v for k, v in image.items() if not k.startswith("_")}
                     record.update({"quay": [{"tag": tag, "sha": quay, "link": f"https://quay.io/noiro/{name}:{tag}"}],
                                    "docker": [{"tag": tag, "sha": docker, "link": f"https://hub.docker.com/layers/noiro/{name}/{tag}/images/sha256-{docker}?context=explore"}],
@@ -376,17 +390,25 @@ def prepare_package(args):
                                    "build-logs": new_prefix + args.release_tag + "-buildlog.txt",
                                    "build-time": builder.manifest["prepared_at"]})
                     record["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve.txt").read_text())
+                    record["severity_type"] = "grype"
+                    for field in ("cve_error", "severity_link"):
+                        record.pop(field, None)
                     for base in record.get("base-image", []):
-                        base["cve"] = new_prefix + args.release_tag + "-cve-base.txt"
-                        base["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve-base.txt").read_text())
+                        if base.get("cve", "").startswith(old_prefix):
+                            base["cve"] = new_prefix + base["cve"][len(old_prefix):]
                     original_path = origin / "docs" / old_prefix / (args.release_tag + "-cve-base-original.txt")
                     if not original_path.exists():
                         original_path = local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve-base.txt")
-                    builder.add(original_path, "docs/" + new_prefix + args.release_tag + "-cve-base-original.txt")
+                    original_destination = "docs/" + new_prefix + args.release_tag + "-cve-base-original.txt"
+                    if not any(item["path"] == original_destination for item in builder.manifest["files"]):
+                        builder.add(original_path, original_destination)
+                    original_counts = severity(original_path.read_text(errors="replace"))[0] if "SEVERITY" in original_path.read_text(errors="replace") else None
                     record["base-image-original"] = [{"sha": record["base-image"][0]["sha"],
                                                         "cve": new_prefix + args.release_tag + "-cve-base-original.txt",
-                                                        "severity": severity(original_path.read_text()), "severity_type": "grype",
+                                                        "severity_type": "grype" if original_counts is not None else "unknown",
                                                         "date-and-time": builder.manifest["prepared_at"]}]
+                    if original_counts is not None:
+                        record["base-image-original"][0]["severity"] = [original_counts]
                     sha_path = origin / "docs" / old_prefix / (args.release_tag + "-base-image-sha.txt")
                     if sha_path.exists():
                         saved_sha = local_file(origin, "docs/" + old_prefix + args.release_tag + "-base-image-sha.txt").read_text().strip().removeprefix("sha256:")
@@ -418,6 +440,21 @@ def validate_bundle(root):
         raise EvidenceError("stream does not match artifact directory")
     if not SHA.fullmatch(manifest["source"]["sha"]) or not SHA.fullmatch(manifest["cicd"]["sha"]):
         raise EvidenceError("invalid bundle identity")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", manifest["source"]["repository"]):
+        raise EvidenceError("invalid bundle source repository")
+    for key in ("id", "number", "attempt"):
+        if not isinstance(manifest["run"].get(key), str) or not re.fullmatch(r"[1-9][0-9]*", manifest["run"][key]):
+            raise EvidenceError("invalid bundle run identity")
+    for key in ("trigger_tag", "upstream_id"):
+        valid_name(manifest["run"][key], "run " + key)
+    if not isinstance(manifest["prepared_at"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (?:PST|PDT)", manifest["prepared_at"]):
+        raise EvidenceError("invalid prepared timestamp")
+    if manifest["kind"] == "images" and (directory != "z" or "released" in manifest):
+        raise EvidenceError("image bundles may update only the z stream")
+    if manifest["kind"] == "package" and manifest.get("images"):
+        raise EvidenceError("package bundles may not forge image build history")
+    if manifest.get("released", False) and (manifest["kind"] != "package" or directory != "r"):
+        raise EvidenceError("only release package bundles may mark a stream released")
     prefix = f"docs/release_artifacts/{release}/{directory}/"
     files = {}
     for item in manifest["files"]:
@@ -434,6 +471,10 @@ def validate_bundle(root):
         if name in names:
             raise EvidenceError("duplicate image record")
         names.add(name)
+        if manifest["kind"] == "images" and record.get("commit") != [{
+                "sha": manifest["source"]["sha"],
+                "link": f"https://github.com/{manifest['source']['repository']}/commit/{manifest['source']['sha']}"}]:
+            raise EvidenceError("image record source differs from bundle source")
         for key in ("sbom", "cve", "build-logs"):
             if "docs/" + record[key] not in files:
                 raise EvidenceError("record references absent evidence")
@@ -455,11 +496,80 @@ def validate_bundle(root):
     for observation in manifest["observations"]:
         if not DIGEST.fullmatch(observation["digest"]):
             raise EvidenceError("invalid observed digest")
+    descriptor_names = set()
     for image in manifest.get("images", []):
         valid_name(image["name"], "image name")
+        if image["name"] in descriptor_names:
+            raise EvidenceError("duplicate image build history")
+        descriptor_names.add(image["name"])
         if not DIGEST.fullmatch(image["image_id"]):
             raise EvidenceError("invalid prepared image ID")
+    if manifest["kind"] == "images" and {item["name"] for item in manifest["images"]} != names:
+        raise EvidenceError("image build history does not match image records")
+    retained = manifest.get("retained_files", [])
+    if manifest["kind"] == "images" and retained:
+        raise EvidenceError("image bundles may not contain retained package artifacts")
+    if manifest["kind"] == "package" and len(retained) != 1:
+        raise EvidenceError("package bundle must retain exactly one package artifact")
+    for item in retained:
+        parts = relative_path(item["path"]).parts
+        if len(parts) != 2 or parts[0] != "retained":
+            raise EvidenceError("invalid retained artifact path")
+        path = local_file(root, item["path"])
+        if digest_file(path) != item["sha256"] or path.stat().st_size != item["size"]:
+            raise EvidenceError("retained artifact size/hash mismatch")
     return manifest, files
+
+
+def validate_expected_scope(args, manifest, files):
+    expected = {"release_tag": args.expected_release_tag, "kind": args.expected_kind,
+                "stream": args.expected_stream, "source.repository": args.expected_source_repository,
+                "source.sha": args.expected_source_sha, "cicd.sha": args.expected_cicd_sha,
+                "run.id": args.expected_run_id}
+    for key, value in expected.items():
+        current = manifest
+        for part in key.split("."):
+            current = current[part]
+        if current != value:
+            raise EvidenceError("bundle differs from trusted publisher scope: " + key)
+    if args.expected_run_attempt and manifest["run"]["attempt"] != args.expected_run_attempt:
+        raise EvidenceError("bundle differs from expected producer attempt")
+    allowed = {valid_name(name, "expected image") for name in args.expected_images.split(",") if name}
+    names = {record["name"] for record in manifest["records"]}
+    if not names.issubset(allowed):
+        raise EvidenceError("bundle contains another component's images")
+    owners = names | ({"acc-provision"} if manifest["kind"] == "package" else set())
+    for path in files:
+        if PurePosixPath(path).parts[4] not in owners:
+            raise EvidenceError("bundle writes another component's artifact directory")
+
+
+def replay_guard(checkout, manifest):
+    path = safe_destination(checkout, f"docs/release_artifacts/{manifest['release_tag']}/{manifest['directory']}/.ci-evidence.json")
+    index = json.loads(path.read_text()) if path.exists() else {"schema_version": 1, "components": {}}
+    if index.get("schema_version") != 1 or not isinstance(index.get("components"), dict):
+        raise EvidenceError("invalid publication identity index")
+    names = [record["name"] for record in manifest["records"]]
+    if manifest["kind"] == "package":
+        names.append("acc-provision")
+    fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    order = (int(manifest["run"]["id"]), int(manifest["run"]["attempt"]))
+    keys = [manifest["kind"] + ":" + manifest["source"]["repository"] + ":" + name for name in names]
+    already = bool(keys)
+    for key in keys:
+        prior = index["components"].get(key)
+        if not prior or tuple(prior["order"]) != order:
+            already = False
+        if prior and tuple(prior["order"]) > order:
+            return path, index, True
+        if prior and tuple(prior["order"]) == order and prior["bundle_sha256"] != fingerprint:
+            raise EvidenceError("producer run/attempt already has a different frozen bundle")
+    if already:
+        return path, index, True
+    for key in keys:
+        index["components"][key] = {"order": list(order), "bundle_sha256": fingerprint,
+                                     "source_sha": manifest["source"]["sha"], "cicd_sha": manifest["cicd"]["sha"]}
+    return path, index, False
 
 
 def merge_status(data, manifest):
@@ -486,8 +596,16 @@ def merge_status(data, manifest):
             stream["container_images"].append(copy.deepcopy(record))
         else:
             # Preserve extension fields from concurrent components and maintainers.
+            for field in ("cve_error", "severity_link"):
+                old.pop(field, None)
             old.update(copy.deepcopy(record))
     if manifest["kind"] == "package":
+        if manifest["records"]:
+            # A release/RC promotion selects a complete z cohort. Components
+            # removed from that cohort must not survive from an older release.
+            names = [record["name"] for record in manifest["records"]]
+            stream["container_images"] = [next(item for item in stream["container_images"] if item["name"] == name)
+                                           for name in names]
         stream["acc_provision"] = copy.deepcopy(manifest["package"])
         if manifest.get("released"):
             stream["released"] = True
@@ -516,6 +634,7 @@ def safe_destination(checkout, relative):
 def publish(args):
     # Full validation precedes even clone; failed bundles cannot write Git state.
     manifest, files = validate_bundle(args.bundle)
+    validate_expected_scope(args, manifest, files)
     repository = args.repository
     if repository.startswith("https://"):
         if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", repository):
@@ -537,6 +656,10 @@ def publish(args):
             target = frozen / "artifacts" / destination
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+        for item in manifest.get("retained_files", []):
+            target = frozen / item["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(local_file(args.bundle, item["path"]), target)
         manifest, files = validate_bundle(frozen)
         helper = temporary / "askpass.sh"
         helper.write_text('#!/bin/sh\ncase "$1" in\n*Username*) printf "%s\\n" x-access-token;;\n'
@@ -557,6 +680,10 @@ def publish(args):
             status = safe_destination(checkout, "docs/release_artifacts/releases.yaml")
             status.parent.mkdir(parents=True, exist_ok=True)
             previous = yaml.safe_load(status.read_text(encoding="utf-8")) if status.exists() else None
+            identity_path, identity_index, stale = replay_guard(checkout, manifest)
+            if stale:
+                print("A newer producer run already published these components")
+                return
             updated = merge_status(copy.deepcopy(previous), manifest)
             if updated != previous:
                 status.write_text(yaml.safe_dump(updated, sort_keys=False), encoding="utf-8")
@@ -564,6 +691,8 @@ def publish(args):
                 target = safe_destination(checkout, destination)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
+            identity_path.parent.mkdir(parents=True, exist_ok=True)
+            identity_path.write_text(json.dumps(identity_index, sort_keys=True, indent=2) + "\n")
             run(git + ["add", "--", "docs/release_artifacts"], cwd=checkout, env=env)
             changed = run(git + ["diff", "--cached", "--name-only"], cwd=checkout, env=env)
             if not changed.strip():
@@ -617,6 +746,9 @@ def parser():
     child.add_argument("--bundle", required=True)
     child.add_argument("--repository", required=True)
     child.add_argument("--branch", required=True)
+    for flag in ("release-tag", "kind", "stream", "source-repository", "source-sha", "cicd-sha", "run-id", "images"):
+        child.add_argument("--expected-" + flag, required=True)
+    child.add_argument("--expected-run-attempt")
     child.set_defaults(func=publish)
     return root
 

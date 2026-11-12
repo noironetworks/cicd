@@ -14,6 +14,7 @@ class EvidenceHardening(unittest.TestCase):
     images = fixture.EvidenceCLI.images
     prepare = fixture.EvidenceCLI.prepare
     publish = fixture.EvidenceCLI.publish
+    expected_args = fixture.EvidenceCLI.expected_args
 
     def test_every_registry_tag_must_match_recorded_built_image_id(self):
         metadata = self.images()
