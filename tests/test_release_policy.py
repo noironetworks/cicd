@@ -186,6 +186,11 @@ class ReleasePolicyIntegration(unittest.TestCase):
         dependency = {'reference': f'quay.io/noirolabs/opflex-build-base:{TAG}.81c2369',
                       'digest': 'sha256:' + 'f' * 64}
         lock['dependencies'].append(dependency)
+        lock['build_inputs'] = {'noironetworks/opflex': {'role': 'opflex-build-base',
+            'reference': 'quay.io/noirolabs/opflex-build-base@' + dependency['digest'],
+            'digest': dependency['digest'], 'image_id': 'sha256:' + 'e' * 64,
+            'captured_before_build': True, 'immutable': True}}
+
         digests[dependency['reference']] = dependency['digest']
         return lock, {'schema_version': 1, 'digests': digests, 'platforms': {ref: 'linux/amd64' for ref in digests}, 'platform_digests': dict(digests)}
 

@@ -58,6 +58,12 @@ class CreateReleaseLockIntegration(unittest.TestCase):
                                  run_url=f'https://github.com/{repository}/actions/runs/{run_id}',
                                  trigger_tag=release, upstream_id=UPSTREAM)
         builder = ci_evidence.Builder(args, 'images', release + '.z', 'z')
+        if repository == 'noironetworks/opflex':
+            builder.manifest['build_inputs'] = [{'role': 'opflex-build-base',
+                'reference': 'quay.io/noirolabs/opflex-build-base@sha256:' + 'f' * 64,
+                'digest': 'sha256:' + 'f' * 64, 'image_id': 'sha256:' + 'e' * 64,
+                'captured_before_build': True, 'immutable': True}]
+
         for name in names:
             index = list(FIELDS).index(name) + 1
             digest = f'{index:064x}'
@@ -117,6 +123,18 @@ class CreateReleaseLockIntegration(unittest.TestCase):
             expected = {item['reference']: item['digest'] for image in lock['images'].values() for item in image['registries'].values()}
             expected.update({item['reference']: item['digest'] for item in lock['dependencies']})
             release_policy.validate_input_lock(lock, TAG, {'schema_version': 1, 'digests': expected, 'platforms': {ref: 'linux/amd64' for ref in expected}})
+
+    def test_cli_requires_recorded_immutable_compilation_base_matching_approved_dependency(self):
+        original = json.loads((self.opflex / 'manifest.json').read_text())
+        for update in (lambda m: m.pop('build_inputs'),
+                       lambda m: m['build_inputs'][0].update(immutable=False),
+                       lambda m: m['build_inputs'][0].update(captured_before_build=False),
+                       lambda m: m['build_inputs'][0].update(digest='sha256:' + 'a' * 64)):
+            manifest = json.loads(json.dumps(original)); update(manifest)
+            (self.opflex / 'manifest.json').write_text(json.dumps(manifest))
+            self.cli(success=False)
+        (self.opflex / 'manifest.json').write_text(json.dumps(original))
+        self.cli(success=False, dependency=[self.base.replace('f' * 64, 'a' * 64)])
 
     def test_cli_rejects_tampered_bundle_missing_image_pin_and_base_dependency(self):
         manifest = json.loads((self.aci / 'manifest.json').read_text())

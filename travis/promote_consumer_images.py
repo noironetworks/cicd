@@ -43,9 +43,16 @@ def persist(path, value):
 
 
 def image_repository(reference):
-    if not re.fullmatch(r"(?:quay\.io|docker\.io|registry\.access\.redhat\.com|registry\.redhat\.io)/[A-Za-z0-9_./-]+:[A-Za-z0-9][A-Za-z0-9._-]*", reference):
-        raise policy.PolicyError("noncanonical image reference")
-    repository = reference.rsplit(":", 1)[0]
+    if "@" in reference:
+        repository, selected = reference.rsplit("@", 1)
+        if not DIGEST.fullmatch(selected):
+            raise policy.PolicyError("invalid immutable image reference")
+    else:
+        if not re.fullmatch(r".+:[A-Za-z0-9][A-Za-z0-9._-]*", reference):
+            raise policy.PolicyError("noncanonical image reference")
+        repository = reference.rsplit(":", 1)[0]
+    if not re.fullmatch(r"(?:quay\.io|docker\.io|registry\.access\.redhat\.com|registry\.redhat\.io)/[A-Za-z0-9_./-]+", repository):
+        raise policy.PolicyError("noncanonical image repository")
     if any(part in ("", ".", "..") for part in repository.split("/")):
         raise policy.PolicyError("invalid image repository path")
     return repository
