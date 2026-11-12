@@ -10,6 +10,9 @@ import sys
 
 from scan_result import collect, environment, execute, stamp, DIGEST
 
+ACI_IMAGES = {"aci-containers-host", "aci-containers-host-ovscni", "aci-containers-controller", "cnideploy",
+              "aci-containers-operator", "openvswitch", "aci-containers-webhook", "aci-containers-certmanager"}
+
 
 def write(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,6 +49,21 @@ def publish(args):
                                  "immutable": reference.endswith("@" + expected)})
         except (OSError, ValueError, KeyError, TypeError):
             build_input_error = "actual-build-base-input-not-bound"
+    elif args.image in ACI_IMAGES:
+        try:
+            captured = json.loads((directory / "base-provenance/aci-iptables-base.json").read_text())
+            if not isinstance(captured, dict):
+                raise ValueError("invalid ACI iptables input proof")
+            reference, expected = captured["reference"], captured["digest"]
+            if (captured.get("state") != "ok" or captured.get("role") != "opflex-build-base"
+                    or captured.get("captured_before_build") is not True or captured.get("immutable") is not True
+                    or not DIGEST.fullmatch(expected) or not DIGEST.fullmatch(captured.get("image_id", ""))
+                    or reference != "quay.io/noirolabs/opflex-build-base@" + expected):
+                raise ValueError("ACI iptables input was not immutably verified before extraction")
+            build_inputs.append({key: captured[key] for key in
+                                 ("role", "reference", "digest", "image_id", "captured_before_build", "immutable")})
+        except (OSError, ValueError, KeyError, TypeError):
+            build_input_error = "actual-iptables-build-input-not-bound"
     receipt = {"schema_version": 1, "image": args.image, "image_id": scan_data.get("image_id"),
                "state": "in-progress", "attempts": [], "references": [], "alias_policy": "aliases-last",
                "started_at": stamp(), "critical_failure": None, "scan_policy": policy}
@@ -142,8 +160,11 @@ def publish(args):
                 if (report_dir / (filename + ".json")).exists():
                     row["reports"]["grype-" + target] = f"reports/{args.image}/{filename}.json"
             if build_inputs:
-                row["reports"]["build-input"] = "opflex-build-base-input.txt"
-                row["reports"]["build-input-provenance"] = "base-provenance/opflex-build.json"
+                if args.image == "opflex":
+                    row["reports"]["build-input"] = "opflex-build-base-input.txt"
+                    row["reports"]["build-input-provenance"] = "base-provenance/opflex-build.json"
+                else:
+                    row["reports"]["build-input-provenance"] = "base-provenance/aci-iptables-base.json"
             metadata = directory / "image-metadata.jsonl"
             metadata.parent.mkdir(parents=True, exist_ok=True)
             with metadata.open("a", encoding="utf-8") as stream:

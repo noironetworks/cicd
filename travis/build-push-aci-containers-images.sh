@@ -67,7 +67,19 @@ rm -f \
   dist-static/iptables-bin.tar.gz \
   dist-static/iptables-libs.tar.gz \
   dist-static/iptables-wrapper-installer.sh
-docker/copy_iptables.sh ${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG} dist-static
+IPTABLES_BASE_REF="${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG}"
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && "${CI_EVIDENCE_MODE:-}" == "prepared-v1" ]]; then
+  : "${EXPECTED_OPFLEX_BASE_DIGEST:?EXPECTED_OPFLEX_BASE_DIGEST is required for the approved iptables input}"
+  [[ "${EXPECTED_OPFLEX_BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Invalid approved iptables build-base digest" >&2
+    exit 1
+  }
+  IPTABLES_BASE_REF="${IMAGE_BUILD_REGISTRY}/opflex-build-base@${EXPECTED_OPFLEX_BASE_DIGEST}"
+  python3 "$SCRIPTS_DIR/scan_result.py" capture-input \
+    --reference "${IPTABLES_BASE_REF}" --expected-digest "${EXPECTED_OPFLEX_BASE_DIGEST}" \
+    --output "${CI_ARTIFACT_DIR}/base-provenance/aci-iptables-base.json"
+fi
+docker/copy_iptables.sh "${IPTABLES_BASE_REF}" dist-static
 tar -tzf dist-static/iptables-bin.tar.gz >/dev/null
 tar -tzf dist-static/iptables-libs.tar.gz >/dev/null
 [[ -s dist-static/iptables-wrapper-installer.sh ]]

@@ -230,12 +230,13 @@ def first_base(dockerfile, build_args=()):
     raise ValueError("Dockerfile has no base")
 
 
-def capture_base(dockerfile, output, *, build_args=(), pull=False, pull_once=None, expected_digest=None):
+def capture_base(dockerfile, output, *, build_args=(), pull=False, pull_once=None, expected_digest=None, reference=None):
     result = {"state": "unavailable", "reason": "actual-build-base-unknown", "observed_at": stamp()}
     try:
-        reference = first_base(dockerfile, build_args)
+        reference = reference or first_base(dockerfile, build_args)
         result["reference"] = reference
-        result["dockerfile"] = str(dockerfile)
+        if dockerfile is not None:
+            result["dockerfile"] = str(dockerfile)
         cache = json.loads(Path(pull_once).read_text()) if pull_once and Path(pull_once).exists() else {}
         if (pull or pull_once) and reference not in cache:
             execute(["docker", "pull", "--platform", "linux/amd64", reference])
@@ -252,7 +253,9 @@ def capture_base(dockerfile, output, *, build_args=(), pull=False, pull_once=Non
         if reference in cache and cache[reference] != {"image_id": image_id, "digest": resolved}:
             raise ValueError("captured local build base changed")
         result = {"state": "ok", "reference": reference, "image_id": image_id, "digest": resolved,
-                  "observed_at": stamp(), "dockerfile": str(dockerfile), "captured_before_build": True}
+                  "observed_at": stamp(), "captured_before_build": True}
+        if dockerfile is not None:
+            result["dockerfile"] = str(dockerfile)
         if pull_once:
             cache[reference] = {"image_id": image_id, "digest": resolved}
             cache_path = Path(pull_once)
@@ -329,6 +332,10 @@ def main():
     capture.add_argument("--pull", action="store_true")
     capture.add_argument("--pull-once-file")
     capture.add_argument("--expected-digest")
+    capture_input = sub.add_parser("capture-input")
+    capture_input.add_argument("--reference", required=True)
+    capture_input.add_argument("--expected-digest", required=True)
+    capture_input.add_argument("--output", required=True)
     collect_parser = sub.add_parser("collect")
     collect_parser.add_argument("--image-ref", required=True)
     collect_parser.add_argument("--base-provenance")
@@ -341,6 +348,16 @@ def main():
                               pull_once=args.pull_once_file, expected_digest=args.expected_digest)
         if args.expected_digest and result["state"] != "ok":
             parser.exit(1, "Expected build-base digest was not verified\n")
+    elif args.command == "capture-input":
+        if (not DIGEST.fullmatch(args.expected_digest)
+                or args.reference != "quay.io/noirolabs/opflex-build-base@" + args.expected_digest):
+            parser.exit(1, "The approved build input must be an immutable canonical reference\n")
+        result = capture_base(None, args.output, pull=True, expected_digest=args.expected_digest,
+                              reference=args.reference)
+        if result["state"] != "ok":
+            parser.exit(1, "The approved build input could not be verified\n")
+        result.update(role="opflex-build-base", immutable=True)
+        Path(args.output).write_text(json.dumps(result, sort_keys=True) + "\n")
     else:
         collect(args.image_ref, args.base_provenance, args.output, lock=args.lock, timeout=args.timeout)
 
