@@ -40,7 +40,7 @@ class EvidenceError(RuntimeError):
 def clean_environment():
     # Preparation must never pass status/publishing secrets to external tools.
     return {k: v for k, v in os.environ.items()
-            if not re.search(r"TOKEN|PASSWORD|PASSWD|PSWD|SECRET|TAGGER|ASKPASS", k, re.I)}
+            if not re.search(r"TOKEN|PASSWORD|PASSWD|PSWD|(?:^|_)PASS(?:$|_)|SECRET|TAGGER|ASKPASS", k, re.I)}
 
 
 def run(command, *, cwd=None, env=None, timeout=TIMEOUT):
@@ -493,8 +493,13 @@ def publish(args):
     # Full validation precedes even clone; failed bundles cannot write Git state.
     manifest, files = validate_bundle(args.bundle)
     repository = args.repository
-    if repository.startswith("-") or re.search(r"https?://[^/]*@", repository):
-        raise EvidenceError("repository credentials in URLs are prohibited")
+    if repository.startswith("https://"):
+        if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", repository):
+            raise EvidenceError("status remote must be an approved GitHub HTTPS repository")
+    elif not Path(repository).is_absolute() or not Path(repository).is_dir():
+        raise EvidenceError("status remote must use HTTPS or an explicit local bare repository")
+    elif run(["git", "--git-dir", repository, "rev-parse", "--is-bare-repository"], env=clean_environment()).strip() != "true":
+        raise EvidenceError("local status remote must be bare")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", args.branch) or ".." in args.branch:
         raise EvidenceError("invalid status branch")
     with tempfile.TemporaryDirectory(prefix="ci-status-") as temporary:
@@ -513,9 +518,11 @@ def publish(args):
         helper.write_text('#!/bin/sh\ncase "$1" in\n*Username*) printf "%s\\n" x-access-token;;\n'
                           '*Password*) printf "%s\\n" "${TRAVIS_TAGGER:?}";;\n*) exit 1;;\nesac\n')
         helper.chmod(0o700)
-        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_CONFIG_")}
+        env = {key: value for key, value in clean_environment().items() if not key.startswith("GIT_")}
+        if os.environ.get("TRAVIS_TAGGER"):
+            env["TRAVIS_TAGGER"] = os.environ["TRAVIS_TAGGER"]
         env.update(GIT_ASKPASS=str(helper), GIT_TERMINAL_PROMPT="0",
-                   GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+                   GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ALLOW_PROTOCOL="https:file")
         # Use no inherited credential helpers and no ambient extra HTTP headers.
         git = ["git", "-c", "credential.helper=", "-c", "http.extraHeader=", "-c", "core.hooksPath=" + os.devnull]
         for attempt in range(1, 4):
