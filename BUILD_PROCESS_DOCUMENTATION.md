@@ -1,8 +1,8 @@
 # ACI Containers Build and Release Process
 
-> **Target process; implementation and activation are pending.** Public source
-> baselines were refreshed on **2026-11-12**. The implementation families below
-> are unmerged proposals, including changes exercised by local fixture tests.
+> **Implemented review stacks; merge and activation are pending.** Public source
+> baselines were refreshed on **2026-11-12**. The PRs below are unmerged proposals,
+> including changes exercised by local fixture tests.
 > Neither source inspection nor those tests proves deployed behavior. No target
 > pipeline has been demonstrated end to end, and no production rehearsal is
 > claimed. The process chapters describe the target in present tense; section 1
@@ -53,20 +53,35 @@ the current MMR source uses the legacy per-image status helper and shared
 report files. ACI and OpFlex are **not** currently documented as using the old
 batched publisher. Scanning is **not** documented as advisory at the baseline.
 
-### 1.2 Proposed implementation families
+### 1.2 Implemented, unmerged review stacks
 
-Family IDs identify proposed changes; they do not mean merged, activated or
-rehearsed. Proposed filenames are plain text until reviewed source links exist.
+These PRs contain implemented proposals. They are not merged or activated;
+local fixture tests are not deployment evidence. Hosted Linux results are reported
+separately. MMR provider retirement updates the existing guard PRs in place.
 
-| Family | Proposed change | Verification boundary |
-|---|---|---|
-| F1 | `travis/ci_evidence.py`, prepared bundles, bounded status transactions and exact CICD caller pins | Local fixtures; fatal scanner compatibility retained |
-| F2 | GHA-only provider policy and unprivileged policy CI on both product lines | Local workflow/guard fixtures; service retirement needs owner confirmation |
-| F3 | Portal rendering of build/refresh result and freshness | Normalization and real-page browser fixtures; portal deployment unverified |
-| F4 | Scheduled refresh observations, platform selection and normal-push retries | Fake HTTP/Docker and temporary bare-Git tests; external job activation unverified |
-| F5 | Explicit build scan observations and opt-in advisory publication | Separate policy change; default remains fatal |
-| F6 | `release_policy.py`, `create_release_lock.py`, `promote_consumer_images.py`, signed authorization and verified receipts | Local policy/package fixtures; production authority and destinations need verification |
-| F7 | This guide, maintained in [cicd #86](https://github.com/noironetworks/cicd/pull/86) | Documentation; no implementation or deployment claim |
+| Family | Repository / scope | MMR | Default pipeline |
+|---|---|---|---|
+| F1 helpers | cicd | [#91](https://github.com/noironetworks/cicd/pull/91) | [#92](https://github.com/noironetworks/cicd/pull/92) |
+| F2 provider retirement | opflex | [#691](https://github.com/noironetworks/opflex/pull/691) | [#699](https://github.com/noironetworks/opflex/pull/699) |
+| F2 provider retirement | aci-containers | [#1774](https://github.com/noironetworks/aci-containers/pull/1774) | [#1802](https://github.com/noironetworks/aci-containers/pull/1802) |
+| F2 provider retirement | acc-provision | [#1461](https://github.com/noironetworks/acc-provision/pull/1461) | [#1471](https://github.com/noironetworks/acc-provision/pull/1471) |
+| F2 retired-image policy | acc-provision-operator | [#56](https://github.com/noironetworks/acc-provision-operator/pull/56) | [#57](https://github.com/noironetworks/acc-provision-operator/pull/57) |
+| F1 callers | opflex | [#700](https://github.com/noironetworks/opflex/pull/700) | [#701](https://github.com/noironetworks/opflex/pull/701) |
+| F1 callers | aci-containers | [#1803](https://github.com/noironetworks/aci-containers/pull/1803) | [#1804](https://github.com/noironetworks/aci-containers/pull/1804) |
+| F1 callers | acc-provision | [#1472](https://github.com/noironetworks/acc-provision/pull/1472) | [#1473](https://github.com/noironetworks/acc-provision/pull/1473) |
+| F3 portal | cicd-status | Shared [#20](https://github.com/noironetworks/cicd-status/pull/20) | Same shared portal |
+| F4 CVE refresher | Owner deployment gated | Private team review | Private team review |
+| F6 / P1–P2 policy | cicd | [#93](https://github.com/noironetworks/cicd/pull/93) | [#94](https://github.com/noironetworks/cicd/pull/94) |
+| F5 scan helpers | cicd | [#95](https://github.com/noironetworks/cicd/pull/95) | [#96](https://github.com/noironetworks/cicd/pull/96) |
+| F5 advisory callers | opflex | [#702](https://github.com/noironetworks/opflex/pull/702) | [#703](https://github.com/noironetworks/opflex/pull/703) |
+| F5 advisory callers | aci-containers | [#1805](https://github.com/noironetworks/aci-containers/pull/1805) | [#1806](https://github.com/noironetworks/aci-containers/pull/1806) |
+| B1 immutable input child | opflex | [#704](https://github.com/noironetworks/opflex/pull/704) | [#705](https://github.com/noironetworks/opflex/pull/705) |
+| F7 guide | cicd | Shared [#86](https://github.com/noironetworks/cicd/pull/86) | Updated in place |
+
+**Selected MMR helper pin:** [`34fb4932b027fb1776575c0918b1f9ca530b4929`](https://github.com/noironetworks/cicd/blob/34fb4932b027fb1776575c0918b1f9ca530b4929/travis/ci_evidence.py).
+**Selected Default helper pin:** [`4ad89605a5b57904392301c9c570847aae530518`](https://github.com/noironetworks/cicd/blob/4ad89605a5b57904392301c9c570847aae530518/travis/ci_evidence.py).
+F1 callers retain fatal scan policy with these exact pins; advisory activation
+remains gated on deployed readers/refresher and separate approval.
 
 ### 1.3 Capability and current limitations
 
@@ -109,18 +124,12 @@ valid release-tag signature from the authorized key and identity.
 
 ```mermaid
 flowchart TD
-  inputs[Reviewed versions and source inputs] --> tests[Same-commit tests]
-  tests --> images[OpFlex base, runtime and ACI preview publication]
-  images --> lock[Reviewed input lock committed in ACC source]
-  lock --> tag[Annotated ACC tag on that source commit]
+  inputs[Reviewed versions and source inputs] --> tests[Same-commit tests] --> images[OpFlex base, runtime and ACI preview publication]
+  images --> lock[Reviewed input lock committed in ACC source] --> tag[Annotated ACC tag on that source commit]
   tag --> preview[Build and upload TestPyPI preview]
-  tag --> signed[Authorized signed production tag]
-  signed --> promote[Owner-activated consumer digest promotion]
-  promote --> verify[Verify signature, lock, tests and consumer digests]
-  verify --> package[Build retained production package]
-  package --> upload[Upload or reconcile identical package bytes]
-  upload --> receipt[Verified upload receipt]
-  receipt --> status[Publish retained prepared status bundle]
+  tag --> signed[Authorized signed production tag] --> promote[Owner-activated consumer digest promotion]
+  promote --> verify[Verify signature, lock, tests and consumer digests] --> package[Build retained production package]
+  package --> upload[Upload or reconcile identical package bytes] --> receipt[Verified upload receipt] --> status[Publish retained prepared status bundle]
 ```
 
 This is the target dependency flow. It does not assert atomic publication across
@@ -143,9 +152,8 @@ Review these together, separately for MMR and the default line:
 - The authorized public signing policy/key files, without changing the existing authority.
 - External Jenkins release settings, explicitly verified by their owner.
 
-A placeholder CICD pin deliberately fails before credentials. Do not substitute
-a moving branch for that pin. A repository-wide source-branch override can
-change either line's fallback; its actual value needs owner verification.
+Any remaining placeholder fails before credentials; do not replace an exact pin
+with a moving branch. Owners verify source-branch overrides on both lines.
 
 ### 3.2 Input lock and source identity
 
@@ -162,9 +170,8 @@ object separately. Editing a working-tree lock after tagging fails verification.
 
 ### 3.3 Supported inputs
 
-The supported set is nine runtime images plus the `opflex-build-base` dependency
-(section 9.1). The lock requires complete producer and registry identity; it does
-not infer readiness from a mutable `.z` alias or a successful workflow name.
+The supported set is nine runtimes plus `opflex-build-base` (section 9.1).
+The lock requires producer/registry identity, not a mutable alias or workflow name.
 
 `gbp_version` and `opflex_server_version` have no supported producer in this
 release path. Classify historical pins before relying on them. The retired
