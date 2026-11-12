@@ -316,7 +316,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
     def test_recheck_rejects_moved_local_tag_object_and_remote_only_mismatch(self):
         self.sign()
         identity = policy.tag_identity(self.repo, TAG)
-        authorization = {'schema_version': 1, **identity, 'package': policy.manifest_identity(self.manifest)}
+        authorization = {'schema_version': 1, **identity, 'cicd_commit': self.current_cicd, 'package': policy.manifest_identity(self.manifest)}
         policy.recheck(self.repo, authorization, self.manifest)
         original = identity['tag_object']
         self.sign(message='Re-signed release to pypi.org', force=True)
@@ -535,6 +535,17 @@ raise SystemExit(23)
             with self.assertRaises(policy.PolicyError): policy.upload(self.manifest_path, receipt, authorization_path,
                 self.repo, artifact, self.policy_path, self.public_key)
 
+
+    def test_forged_package_source_is_rejected_despite_matching_authorization_package(self):
+        self.sign(); authorization = self.authorize()
+        changed = {**self.manifest, 'source_sha': 'f' * 40}
+        authorization['package'] = policy.manifest_identity(changed)
+        manifest_path = write_json(self.dir / 'changed-manifest.json', changed)
+        auth_path = write_json(self.dir / 'changed-auth.json', authorization)
+        with mock.patch.object(policy, 'existing_package', side_effect=AssertionError('must reject before index access')):
+            with self.assertRaises(policy.PolicyError):
+                policy.upload(manifest_path, self.dir / 'receipt.json', auth_path,
+                              self.repo, self.artifact, self.policy_path, self.public_key)
 
     def test_production_context_cannot_redirect_selected_credentials_to_testpypi(self):
         self.preview_manifest()

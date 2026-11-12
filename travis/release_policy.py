@@ -545,6 +545,9 @@ def recheck(repo, authorization, manifest):
         raise PolicyError("package does not match authorized artifact")
     if manifest["name"] != "acc-provision" or manifest["version"] != authorization.get("tag") or manifest["index"] != "pypi":
         raise PolicyError("production package must match the authorized release")
+    if (manifest["source_sha"] != authorization.get("source_sha")
+            or manifest["cicd_commit"] != authorization.get("cicd_commit")):
+        raise PolicyError("package provenance contradicts the signed release authorization")
     assert_remote_tag(repo, authorization)
 
 
