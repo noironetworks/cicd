@@ -65,7 +65,7 @@ rehearsed. Proposed filenames are plain text until reviewed source links exist.
 | F3 | Portal rendering of build/refresh result and freshness | Normalization and real-page browser fixtures; portal deployment unverified |
 | F4 | Scheduled refresh observations, platform selection and normal-push retries | Fake HTTP/Docker and temporary bare-Git tests; external job activation unverified |
 | F5 | Explicit build scan observations and opt-in advisory publication | Separate policy change; default remains fatal |
-| F6 | `release_policy.py`, `create_release_lock.py`, signed authorization and verified upload receipts | Local policy/package fixtures; production authority and destinations need verification |
+| F6 | `release_policy.py`, `create_release_lock.py`, `promote_consumer_images.py`, signed authorization and verified receipts | Local policy/package fixtures; production authority and destinations need verification |
 | F7 | This guide, maintained in [cicd #86](https://github.com/noironetworks/cicd/pull/86) | Documentation; no implementation or deployment claim |
 
 ### 1.3 Capability and current limitations
@@ -81,7 +81,7 @@ rehearsed. Proposed filenames are plain text until reviewed source links exist.
 | ACC package publication | Baseline build/upload/status are coupled | F1/F6 separate build, upload and status jobs with retained bytes and receipts |
 | Production authorization | Existing signed-tag authority must be preserved and checked | F6 verifies the authorized key and identity plus committed inputs and tests |
 | Recovery | Full reruns can rebuild/re-push and fail after branch-head movement | F1/F6 add retained-evidence repair; this does not prove every full rerun is safe |
-| Consumer plain-tag readiness | Packages can refer to tags that need independent verification | F6 validates locked consumer digests; promotion execution remains an activation prerequisite |
+| Consumer plain-tag readiness | Packages can refer to tags that need independent verification | F6 proposes verified promotion and locked-digest checks; owner activation and real-registry verification remain prerequisites |
 | Scheduled refresh | External job configuration, schedule and push wrapper are unverified | Owner installs F4 and removes any legacy force-push path |
 | Live controls | Jenkins settings, variables, signing policy, required checks and notifications are not established by this audit | Owners verify them before activation |
 
@@ -114,7 +114,8 @@ flowchart TD
   lock --> tag[Annotated ACC tag on that source commit]
   tag --> preview[Build and upload TestPyPI preview]
   tag --> signed[Authorized signed production tag]
-  signed --> verify[Verify signature, lock, tests and consumer digests]
+  signed --> promote[Owner-activated consumer digest promotion]
+  promote --> verify[Verify signature, lock, tests and consumer digests]
   verify --> package[Build retained production package]
   package --> upload[Upload or reconcile identical package bytes]
   upload --> receipt[Verified upload receipt]
@@ -240,11 +241,33 @@ force-push status history, or declare an incomplete image set ready.
 
 ### 5.3 Consumer plain tags
 
-Production uses approved consumer plain tags on Quay and Docker Hub. Promotion
-copies approved digests rather than rebuilding and verifies each destination.
-Partial promotion resumes forward from recorded digests. The F6 policy validates
-these locked references; a reviewed promotion executor and its real registry
-behavior remain prerequisites before this target is activated.
+Production uses approved consumer plain tags on Quay and Docker Hub. F6 proposes
+`travis/promote_consumer_images.py`: it verifies the existing authorized signature
+and locked test cohort before opening registry auth files, preflights every source
+and destination, and copies immutable manifests without rebuilding or replacing
+conflicting tags. A retained receipt supports forward resume after partial work.
+
+Promotion precedes package production authorization. It is not automatic in the
+caller workflows: the owner first configures the cohort, destinations and scoped
+auth files. This operator command uses the approved checkout and retained evidence;
+it adds no manual GitHub approval and does not change the signing authority:
+
+```sh
+python3 "$APPROVED_CICD_CHECKOUT/travis/release_policy.py" collect-cohort-checks \
+  --policy "$APPROVED_CICD_CHECKOUT/travis/release-policy.json" \
+  --lock "$APPROVED_ACC_CHECKOUT/ci/release-inputs.json" \
+  --source-sha "$APPROVED_ACC_SOURCE_SHA" --output "$RETAINED_COHORT_CHECKS"
+python3 "$APPROVED_CICD_CHECKOUT/travis/promote_consumer_images.py" \
+  --repository "$APPROVED_ACC_CHECKOUT" --tag "$RELEASE_TAG" \
+  --policy "$APPROVED_CICD_CHECKOUT/travis/release-policy.json" \
+  --public-key "$AUTHORIZED_PUBLIC_KEY_FILE" \
+  --lock "$APPROVED_ACC_CHECKOUT/ci/release-inputs.json" \
+  --checks "$RETAINED_COHORT_CHECKS" --receipt "$PROMOTION_RECEIPT" \
+  --quay-authfile "$QUAY_CONSUMER_AUTHFILE" --docker-authfile "$DOCKER_CONSUMER_AUTHFILE"
+```
+
+The policy re-observes consumer digests before package upload. Local promoter
+fixtures are not proof that real registry promotion or this activation has run.
 
 ## 6. Package publication
 
@@ -271,6 +294,10 @@ SHA-256, source commit, helper commit and index in `package-manifest.json`.
    status publication step receives its status credential; it does not rebuild,
    rescan, upload, or query the package index.
 
+The selected TestPyPI/PyPI secret bindings migrate to index-scoped API tokens
+before activation. The uploader uses literal username `__token__`; legacy account
+passwords are rejected. Owners verify bindings without exposing their values.
+
 ### 6.3 Existing package versions
 
 `release_policy.py upload` compares the retained filename and SHA-256 with the
@@ -290,7 +317,10 @@ Preparation is the observation stage and may invoke Docker or inspect existing
 status for release/RC carry-forward. It runs without a status-write credential.
 
 `ci_evidence.py publish` validates and merges the retained bundle into a fresh
-status checkout. For packages it also requires `--receipt`. This data-only stage
+status checkout. Trusted caller scope fixes release, kind, full stream name,
+source/helper commits, original run identity and allowed image set; these values
+never come from the bundle being validated. Packages also require `--receipt`.
+This data-only stage
 has no Docker/scanner/package-index observation. It seeds missing release/stream
 entries, preserves unrelated records and uses bounded fresh-clone normal-push
 retries. Reapplying the same verified bundle is idempotent. A status error remains
@@ -352,10 +382,19 @@ write; variable names below stand for reviewed values, not default destinations.
 python3 "$APPROVED_CICD_CHECKOUT/travis/ci_evidence.py" publish \
   --bundle "$RETAINED_STATUS_BUNDLE" \
   --receipt "$VERIFIED_UPLOAD_RECEIPT" \
+  --expected-release-tag "$APPROVED_RELEASE_TAG" --expected-kind package \
+  --expected-stream "$APPROVED_RELEASE_STREAM" \
+  --expected-source-repository "$APPROVED_SOURCE_REPOSITORY" \
+  --expected-source-sha "$APPROVED_SOURCE_SHA" --expected-cicd-sha "$APPROVED_CICD_SHA" \
+  --expected-run-id "$ORIGINAL_RUN_ID" --expected-run-attempt "$ORIGINAL_RUN_ATTEMPT" \
+  --expected-images "$APPROVED_RUNTIME_IMAGES" \
   --repository "$VERIFIED_STATUS_REPOSITORY" \
   --branch "$VERIFIED_STATUS_BRANCH"
 ```
 
+The expected scope comes from approved source/run records, not bundle fields.
+The full stream is `<release>.z`, `<release>`, or `<release>.rcN`; the package image
+CSV is empty for preview and contains all nine runtimes for release/RC.
 This command does not prepare a new bundle or use a package credential. A
 missing/mismatched receipt fails. If the receipt was lost, index reconciliation
 through the approved upload policy is a separate, explicitly scoped operation;
@@ -430,6 +469,7 @@ to hide a failed rehearsal or production run.
 4. Have owners verify Jenkins, repository variables, retired provider settings,
    refresh configuration, notification/monitoring and all publication destinations.
 5. Complete the isolated failure/recovery rehearsal and retain remote evidence.
-6. Activate fatal-compatible evidence first; approve advisory scan policy separately.
+6. Activate fatal-compatible evidence first; advisory caller children remain gated
+   on deployed portal/refresher consumers and separate scan-policy approval.
 7. Verify the actual package receipt, remote status records and deployed portal
    after publication. Update section 1 only with that observed evidence.
