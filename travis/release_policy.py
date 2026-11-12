@@ -281,15 +281,18 @@ def validate_input_lock(lock, release_tag, observations):
         if item["reference"] in expected:
             raise PolicyError("a dependency duplicates a runtime or another dependency constraint")
         expected[item["reference"]] = item["digest"]
-    proof = lock.get("build_inputs", {}).get("noironetworks/opflex", {})
     bases = [item for item in dependencies
              if item["reference"].split("@", 1)[0].rsplit(":", 1)[0] == "quay.io/noirolabs/opflex-build-base"]
-    if (len(bases) != 1 or proof.get("role") != "opflex-build-base"
-            or proof.get("captured_before_build") is not True or proof.get("immutable") is not True
-            or proof.get("digest") != bases[0]["digest"]
-            or not DIGEST.fullmatch(str(proof.get("image_id", "")))
-            or proof.get("reference") != "quay.io/noirolabs/opflex-build-base@" + bases[0]["digest"]):
-        raise PolicyError("approved build-base dependency lacks matching immutable build input evidence")
+    if len(bases) != 1:
+        raise PolicyError("one approved build-base dependency is required")
+    for repository in ("noironetworks/opflex", "noironetworks/aci-containers"):
+        proof = lock.get("build_inputs", {}).get(repository, {})
+        if (proof.get("role") != "opflex-build-base"
+                or proof.get("captured_before_build") is not True or proof.get("immutable") is not True
+                or proof.get("digest") != bases[0]["digest"]
+                or not DIGEST.fullmatch(str(proof.get("image_id", "")))
+                or proof.get("reference") != "quay.io/noirolabs/opflex-build-base@" + bases[0]["digest"]):
+            raise PolicyError("approved build-base dependency lacks matching immutable producer input evidence")
     actual = observations.get("digests", {})
     if any(actual.get(ref) != digest for ref, digest in expected.items()):
         raise PolicyError("required image/dependency is missing or has a different digest")
