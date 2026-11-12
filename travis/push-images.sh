@@ -19,7 +19,7 @@ SYFT_BIN=${SYFT_BIN:-/tmp/syft}
 # The child publisher has no reason to inherit the status-write credential. The
 # caller's environment is unchanged for the legacy status entrypoint afterward.
 if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
-  unset TRAVIS_TAGGER GITHUB_TOKEN GH_TOKEN
+  unset TRAVIS_TAGGER GITHUB_TOKEN GH_TOKEN PYPI_PASS TEST_PYPI_PASS
 fi
 
 if [[ ! -x "${GRYPE_BIN}" ]]; then
