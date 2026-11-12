@@ -85,7 +85,14 @@ class EvidenceCLI(unittest.TestCase):
         return repo, checkout
 
     def publish(self, bundle, repo, **kw):
-        return self.cli("publish", "--bundle", bundle, "--repository", repo, "--branch", "main", **kw)
+        return self.cli("publish", "--bundle", bundle, "--repository", repo, "--branch", "main", *self.expected_args(bundle), **kw)
+
+    def expected_args(self, bundle):
+        manifest = json.loads((bundle / "manifest.json").read_text())
+        return ["--expected-release-tag", manifest["release_tag"], "--expected-kind", manifest["kind"],
+                "--expected-stream", manifest["stream"], "--expected-source-repository", manifest["source"]["repository"],
+                "--expected-source-sha", manifest["source"]["sha"], "--expected-cicd-sha", manifest["cicd"]["sha"],
+                "--expected-run-id", manifest["run"]["id"], "--expected-images", ",".join(record["name"] for record in manifest["records"])]
 
     def test_eight_image_reports_digests_and_status_noop(self):
         bundle = self.prepare(self.images(8))
@@ -229,7 +236,7 @@ class EvidenceCLI(unittest.TestCase):
         env = dict(self.env, CONFLICT_GATE=str(gate))
         before = (self.root / "tools.jsonl").read_text()
         processes = [subprocess.Popen([sys.executable, str(ENTRY), "publish", "--bundle", str(bundle),
-                                       "--repository", str(repo), "--branch", "main"], env=env,
+                                       "--repository", str(repo), "--branch", "main", *map(str, self.expected_args(bundle))], env=env,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                      for bundle in (first, second)]
         results = [process.communicate(timeout=30) for process in processes]
@@ -254,6 +261,7 @@ class EvidenceCLI(unittest.TestCase):
         metadata.write_text(json.dumps(row))
         (metadata.parent / "image-0-cve.txt").write_text("replacement evidence\n")
         self.env["FAKE_IMAGE_ID"] = "f" * 64
+        self.common[self.common.index("--run-id") + 1] = "124"
         second = self.prepare(metadata, "replacement-bundle")
         self.env.pop("FAKE_IMAGE_ID")
         self.publish(second, repo)
