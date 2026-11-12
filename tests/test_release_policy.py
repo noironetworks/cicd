@@ -418,6 +418,27 @@ class ReleasePolicyIntegration(unittest.TestCase):
         self.assertEqual(len(calls), 38)
         self.assertTrue(all(c['argv'][:3] == ['buildx', 'imagetools', 'inspect'] and not c['secret_names'] for c in calls))
 
+    def test_cohort_checks_require_latest_tests_for_every_locked_source(self):
+        cohort_policy = copy.deepcopy(self.policy)
+        cohort_policy['required_tests'] += [
+            {'repository': 'noironetworks/opflex', 'workflow': 'opflex-images.yml', 'jobs': ['OpFlex unit tests']},
+            {'repository': 'noironetworks/aci-containers', 'workflow': 'aci-containers-images.yml', 'jobs': ['aci-containers unit tests']}]
+        requirements = policy.check_requirements(cohort_policy, self.lock, self.source)
+        evidence = self.check_evidence()
+        for item in requirements[1:]:
+            evidence['runs'].append({**item, 'event': 'push', 'run_number': 1, 'run_attempt': 1,
+                                     'status': 'completed', 'conclusion': 'success',
+                                     'jobs': {job: 'success' for job in item['jobs']}})
+        policy.validate_checks(evidence, self.source, requirements)
+        for item in evidence['runs'][1:]:
+            original = item['source_sha']; item['source_sha'] = 'f' * 40
+            with self.assertRaises(policy.PolicyError):
+                policy.validate_checks(evidence, self.source, requirements)
+            item['source_sha'] = original
+        evidence['runs'][-1]['conclusion'] = 'failure'
+        with self.assertRaises(policy.PolicyError):
+            policy.validate_checks(evidence, self.source, requirements)
+
     def test_registry_readiness_rejects_unverified_or_wrong_platform(self):
         for observations in ({'schema_version': 1, 'digests': self.observations['digests']},
                              {**self.observations, 'platforms': {ref: 'linux/arm64' for ref in self.observations['digests']}}):
@@ -489,17 +510,33 @@ raise SystemExit(23)
         moved = self.dir / 'download'; moved.mkdir(); artifact = moved / self.artifact.name; shutil.copyfile(self.artifact, artifact)
         index = self.with_index(); write_json(index.state, self.index_record())
         receipt = self.dir / 'production-receipt.json'
-        with mock.patch.dict(policy.INDEXES, {'pypi': (index.url, index.url + '/legacy/')}):
+        with mock.patch.dict(policy.INDEXES, {'pypi': (index.url, index.url + '/legacy/')}), \
+             mock.patch.object(policy, 'collect_cohort_checks', return_value=self.check_evidence()) as checks, \
+             mock.patch.object(policy, 'inspect_inputs', return_value=self.observations) as registry:
             result = policy.main(['upload', '--manifest', str(self.manifest_path), '--artifact', str(artifact),
                 '--receipt', str(receipt), '--authorization', str(authorization_path), '--repo', str(self.repo),
                 '--policy', str(self.policy_path), '--public-key', str(self.public_key)])
         self.assertEqual(result, 0)
+        checks.assert_called_once(); registry.assert_called_once()
         self.assertEqual(json.loads(receipt.read_text())['tag_object'], authorization['tag_object'])
         authorization['tag_object'] = 'e' * 40; write_json(authorization_path, authorization)
         with mock.patch.object(policy, 'existing_package', side_effect=AssertionError('must reject before index access')):
             with self.assertRaises(policy.PolicyError): policy.upload(self.manifest_path, receipt, authorization_path,
                 self.repo, artifact, self.policy_path, self.public_key)
 
+
+    def test_upload_requeries_tests_and_registry_instead_of_trusting_prepared_authorization(self):
+        self.sign(); authorization = self.authorize()
+        authorization_path = write_json(self.dir / 'authorization.json', authorization)
+        failed = self.check_evidence(); failed['runs'][0]['conclusion'] = 'failure'
+        for checks, observations in ((failed, self.observations), (self.check_evidence(), {'schema_version': 1})):
+            with self.subTest(checks=checks), \
+                 mock.patch.object(policy, 'collect_cohort_checks', return_value=checks), \
+                 mock.patch.object(policy, 'inspect_inputs', return_value=observations), \
+                 mock.patch.object(policy, 'existing_package', side_effect=AssertionError('must reject before index access')):
+                with self.assertRaises(policy.PolicyError):
+                    policy.upload(self.manifest_path, self.dir / 'receipt.json', authorization_path,
+                                  self.repo, self.artifact, self.policy_path, self.public_key)
 
     def test_forged_authorization_cannot_change_package_version_or_dependency_lock_hash(self):
         self.sign()

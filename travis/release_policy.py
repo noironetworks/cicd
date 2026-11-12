@@ -298,7 +298,7 @@ def validate_checks(evidence, source_sha, requirements=None):
                 if run.get("repository") == required.get("repository")
                 and run.get("workflow") == required.get("workflow")
                 and run.get("branch") == required.get("branch")
-                and run.get("source_sha") == source_sha and run.get("event") == "push"]
+                and run.get("source_sha") == required.get("source_sha", source_sha) and run.get("event") == "push"]
         if not runs:
             raise PolicyError("required exact-source branch-push tests are missing")
         latest = max(runs, key=lambda run: (int(run.get("run_number", 0)), int(run.get("run_attempt", 0))))
@@ -358,6 +358,36 @@ def collect_checks(repository, source_sha, branch, workflow, jobs):
     return {"schema_version": 1, "source_sha": source_sha,
             "requirements": [{"repository": repository, "workflow": workflow, "branch": branch, "jobs": jobs}],
             "runs": runs}
+
+
+def check_requirements(policy, lock, source_sha):
+    required = policy.get("required_tests")
+    if not isinstance(required, list) or not required:
+        raise PolicyError("trusted workflow policy is missing")
+    branch = lock.get("source_branch")
+    if branch not in policy.get("source_branches", []):
+        raise PolicyError("source branch is not authorized by release policy")
+    sources = {**lock.get("sources", {}), policy["repository"]: source_sha}
+    result = []
+    for item in required:
+        repository = item.get("repository", policy["repository"])
+        selected = sources.get(repository, "")
+        if not SHA.fullmatch(str(selected)):
+            raise PolicyError("required cohort source is missing from the signed lock")
+        result.append({"repository": repository, "workflow": item["workflow"],
+                       "branch": branch, "jobs": item["jobs"], "source_sha": selected})
+    return result
+
+
+def collect_cohort_checks(policy, lock, source_sha):
+    requirements = check_requirements(policy, lock, source_sha)
+    runs = []
+    for required in requirements:
+        evidence = collect_checks(required["repository"], required["source_sha"],
+                                  required["branch"], required["workflow"], required["jobs"])
+        runs.extend(evidence["runs"])
+    return {"schema_version": 1, "source_sha": source_sha,
+            "requirements": requirements, "runs": runs}
 
 
 def inspect_inputs(lock):
@@ -460,14 +490,7 @@ def authorize_source(repo, tag, policy_path, public_key, lock_path, checks_path)
     helper_commit = git(Path(__file__).resolve().parent, "rev-parse", "HEAD")
     if lock.get("cicd_commit") != helper_commit:
         raise PolicyError("running CICD revision does not match the signed input lock")
-    required = policy.get("required_tests")
-    if not isinstance(required, list) or not required:
-        raise PolicyError("trusted workflow policy is missing")
-    branch = lock.get("source_branch")
-    if branch not in policy.get("source_branches", []):
-        raise PolicyError("source branch is not authorized by release policy")
-    requirements = [{"repository": policy["repository"], "workflow": item["workflow"],
-                     "branch": branch, "jobs": item["jobs"]} for item in required]
+    requirements = check_requirements(policy, lock, identity["source_sha"])
     validate_checks(load_json(checks_path), identity["source_sha"], requirements)
     if identity != tag_identity(repo, tag):
         raise PolicyError("release changed while authorizing")
@@ -551,6 +574,13 @@ def upload(manifest_path, receipt_path, authorization_path=None, repo=None, arti
             raise PolicyError("recovery helper does not match the locked CICD revision")
         validate_package_pins(manifest, lock)
         recheck(repo, authorization, manifest)
+        # Prepared JSON is data, not an authorization credential. Re-query the
+        # trusted control plane and public registries at the credential boundary.
+        policy = load_json(policy_path)
+        requirements = check_requirements(policy, lock, authorization["source_sha"])
+        validate_checks(collect_cohort_checks(policy, lock, authorization["source_sha"]),
+                        authorization["source_sha"], requirements)
+        validate_input_lock(lock, authorization["tag"], inspect_inputs(lock))
     present = existing_package(manifest)
     if not present:
         username = os.environ.get("TWINE_USERNAME")
@@ -603,6 +633,9 @@ def main(argv=None):
     for option in ("repository", "source-sha", "branch", "workflow", "output"):
         checks.add_argument("--" + option, required=True)
     checks.add_argument("--job", action="append", required=True)
+    cohort = subs.add_parser("collect-cohort-checks")
+    for option in ("policy", "lock", "source-sha", "output"):
+        cohort.add_argument("--" + option, required=True)
     observe = subs.add_parser("inspect-inputs")
     observe.add_argument("--lock", required=True)
     observe.add_argument("--output", required=True)
@@ -621,6 +654,8 @@ def main(argv=None):
                                                      args.source_sha, args.cicd_commit))
         elif args.command == "collect-checks":
             write_json(args.output, collect_checks(args.repository, args.source_sha, args.branch, args.workflow, args.job))
+        elif args.command == "collect-cohort-checks":
+            write_json(args.output, collect_cohort_checks(load_json(args.policy), load_json(args.lock), args.source_sha))
         elif args.command == "inspect-inputs":
             write_json(args.output, inspect_inputs(load_json(args.lock)))
         elif args.command == "authorize":
