@@ -29,7 +29,8 @@ class EvidenceCLI(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         TOOL_LOG=str(self.root / "tools.jsonl"),
                         TRAVIS_TAGGER="STATUS_CREDENTIAL_SENTINEL", GH_TOKEN="STATUS_CREDENTIAL_SENTINEL",
-                        GITHUB_TOKEN="STATUS_CREDENTIAL_SENTINEL")
+                        GITHUB_TOKEN="STATUS_CREDENTIAL_SENTINEL", PYPI_PASS="STATUS_CREDENTIAL_SENTINEL",
+                        TEST_PYPI_PASS="STATUS_CREDENTIAL_SENTINEL")
         self.common = ["--release-tag", "6.1.1.8", "--source-repository", "noironetworks/aci-containers",
                        "--source-sha", "a" * 40, "--run-id", "123", "--run-url", "https://example.test/run/123",
                        "--trigger-tag", "6.1.1.8", "--upstream-id", "42"]
@@ -169,6 +170,18 @@ class EvidenceCLI(unittest.TestCase):
         result = self.publish(bundle, repo, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(before, self.git("--git-dir", str(repo), "rev-parse", "main"))
+
+    def test_publisher_rejects_exotic_transports_before_git(self):
+        bundle = self.prepare()
+        wrapper = self.bin / "git"
+        marker = self.root / "git-was-run"
+        wrapper.write_text("#!/bin/sh\ntouch '" + str(marker) + "'\nexit 99\n")
+        wrapper.chmod(0o755)
+        for repository in ("ext::sh -c touch /tmp/never", "ssh://git@github.com/noironetworks/cicd-status.git",
+                           "git@github.com:noironetworks/cicd-status.git", "git://github.com/noironetworks/cicd-status.git",
+                           "https://token@github.com/noironetworks/cicd-status.git", "https://example.test/repo.git"):
+            self.assertNotEqual(self.publish(bundle, repository, check=False).returncode, 0)
+        self.assertFalse(marker.exists())
 
     def test_real_push_entrypoint_snapshots_before_next_image(self):
         artifacts = self.root / "artifacts"
