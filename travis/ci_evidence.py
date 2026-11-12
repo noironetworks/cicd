@@ -121,11 +121,14 @@ def identity(args):
         raise EvidenceError("invalid source repository")
     if not args.source_sha or not SHA.fullmatch(args.source_sha):
         raise EvidenceError("source SHA must be a complete Git commit ID")
+    number = args.run_number or args.run_id
+    if not re.fullmatch(r"[1-9][0-9]*", number) or not re.fullmatch(r"[1-9][0-9]*", args.run_attempt):
+        raise EvidenceError("run number and attempt must be positive integers")
     cicd_sha = run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
                    env=clean_environment()).strip()
     return {"source": {"repository": args.source_repository, "sha": args.source_sha},
             "cicd": {"sha": cicd_sha},
-            "run": {"id": args.run_id, "url": args.run_url,
+            "run": {"id": args.run_id, "number": number, "attempt": args.run_attempt, "url": args.run_url,
                     "trigger_tag": args.trigger_tag, "upstream_id": args.upstream_id}}
 
 
@@ -570,6 +573,8 @@ def parser():
     for command in ("prepare-images", "prepare-package"):
         child = sub.add_parser(command)
         child.add_argument("--bundle", required=True)
+        child.add_argument("--run-number", default=os.environ.get("GITHUB_RUN_NUMBER") or os.environ.get("TRAVIS_BUILD_NUMBER"))
+        child.add_argument("--run-attempt", default=os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
         for flag, env in (("release-tag", "RELEASE_TAG"), ("source-repository", "TRAVIS_REPO_SLUG"),
                           ("source-sha", "TRAVIS_COMMIT"), ("run-id", "TRAVIS_BUILD_NUMBER"),
                           ("run-url", "TRAVIS_JOB_WEB_URL"), ("trigger-tag", "TRAVIS_TAG"),
