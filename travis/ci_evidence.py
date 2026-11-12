@@ -147,11 +147,13 @@ def validate_observation(value):
 
 def report_counts(text):
     """Read known report formats without turning unavailable data into zero."""
-    counts = legacy_counts(text)
-    if counts is not None:
-        return counts
     try:
         payload = json.loads(text)
+    except json.JSONDecodeError:
+        if text.lstrip("\ufeff \t\r\n").startswith(("{", "[")):
+            return None
+        return legacy_counts(text)
+    try:
         validate_observation(payload)
         return payload["counts"] if payload["state"] == "ok" else None
     except (ValueError, KeyError, TypeError, EvidenceError):
