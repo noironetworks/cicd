@@ -291,6 +291,11 @@ uses `<release>` and locked consumer plain references. The builder sets the fina
 version before creating the source distribution and records filename, size,
 SHA-256, source commit, helper commit and index in `package-manifest.json`.
 
+Production builds `acikubectl` from the ACI commit in the signed input lock and
+records the actual ACI source SHA in the package manifest. Authorization and
+upload reject a mismatch. These strict locked-input gates are production-only;
+preview retains its existing input route.
+
 ### 6.2 Three separate jobs
 
 1. **Build:** validate inputs and create the retained package, manifest and prepared
@@ -301,6 +306,10 @@ SHA-256, source commit, helper commit and index in `package-manifest.json`.
 3. **Status:** consume the retained bundle and a verified upload receipt. Only the
    status publication step receives its status credential; it does not rebuild,
    rescan, upload, or query the package index.
+
+Producer-job outputs retain the prepared-artifact name, receipt-artifact name and
+original evidence attempt. A failed-jobs rerun uses those outputs rather than
+inventing artifact names or comparing against the repair job's newer attempt.
 
 The selected TestPyPI/PyPI secret bindings migrate to index-scoped API tokens
 before activation. The uploader uses literal username `__token__`; legacy account
