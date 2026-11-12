@@ -58,9 +58,6 @@ class CreateReleaseLockIntegration(unittest.TestCase):
                                  run_url=f'https://github.com/{repository}/actions/runs/{run_id}',
                                  trigger_tag=release, upstream_id=UPSTREAM)
         builder = ci_evidence.Builder(args, 'images', release + '.z', 'z')
-        # Explicit modern provenance is part of the fixture, including on a legacy
-        # builder checkout whose identity() predates these additive schema fields.
-        builder.manifest['run'].update(number=number, attempt=attempt)
         for name in names:
             index = list(FIELDS).index(name) + 1
             digest = f'{index:064x}'
@@ -119,7 +116,7 @@ class CreateReleaseLockIntegration(unittest.TestCase):
             # of promoted tags, which the production authorization collects later.
             expected = {item['reference']: item['digest'] for image in lock['images'].values() for item in image['registries'].values()}
             expected.update({item['reference']: item['digest'] for item in lock['dependencies']})
-            release_policy.validate_input_lock(lock, TAG, {'schema_version': 1, 'digests': expected})
+            release_policy.validate_input_lock(lock, TAG, {'schema_version': 1, 'digests': expected, 'platforms': {ref: 'linux/amd64' for ref in expected}})
 
     def test_cli_rejects_tampered_bundle_missing_image_pin_and_base_dependency(self):
         manifest = json.loads((self.aci / 'manifest.json').read_text())
@@ -132,6 +129,7 @@ class CreateReleaseLockIntegration(unittest.TestCase):
         self.write_versions(missing='opflex_agent_version'); self.cli(success=False)
         self.write_versions(); self.cli(success=False, dependency=[])
         self.cli(success=False, dependency=[self.base, self.base])
+        self.cli(success=False, dependency=[self.base, f'quay.io/noiro/opflex:{TAG}.{UPSTREAM}=sha256:' + 'e' * 64])
         self.versions.write_text(self.versions.read_text() + '    opflex_agent_version: duplicate\n')
         self.cli(success=False)
 

@@ -278,6 +278,8 @@ def validate_input_lock(lock, release_tag, observations):
     for item in dependencies:
         if not DIGEST.fullmatch(item.get("digest", "")) or not item.get("reference"):
             raise PolicyError("invalid dependency identity")
+        if item["reference"] in expected:
+            raise PolicyError("a dependency duplicates a runtime or another dependency constraint")
         expected[item["reference"]] = item["digest"]
     actual = observations.get("digests", {})
     if any(actual.get(ref) != digest for ref, digest in expected.items()):
@@ -590,29 +592,31 @@ def upload(manifest_path, receipt_path, authorization_path=None, repo=None, arti
         env = clean_environment()
         env.update({"TWINE_USERNAME": username, "TWINE_PASSWORD": password,
                     "TWINE_NON_INTERACTIVE": "1", "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring"})
-        # Reconcile even if upload returns an error: the acknowledgement may have
-        # been lost after the index accepted these exact bytes.
-        try:
-            with tempfile.TemporaryDirectory(prefix="release-upload-") as temporary:
-                spool = Path(temporary) / manifest["filename"]
-                shutil.copyfile(manifest["artifact"], spool)
-                if file_hash(spool) != manifest["sha256"]:
-                    raise PolicyError("artifact changed before upload")
-                spool.chmod(0o400)
-                if authorization:
-                    recheck(repo, authorization, manifest)
+        # Only the upload acknowledgement is recoverable. Authorization and
+        # retained-byte failures must never be converted into successful receipts.
+        with tempfile.TemporaryDirectory(prefix="release-upload-") as temporary:
+            spool = Path(temporary) / manifest["filename"]
+            shutil.copyfile(manifest["artifact"], spool)
+            if file_hash(spool) != manifest["sha256"]:
+                raise PolicyError("artifact changed before upload")
+            spool.chmod(0o400)
+            if authorization:
+                recheck(repo, authorization, manifest)
+            upload_error = None
+            try:
                 command([sys.executable, "-m", "twine", "upload", "--non-interactive",
                          "--repository-url", INDEXES[manifest["index"]][1], str(spool)],
                         env=env, timeout=180)
-        except PolicyError:
-            if not existing_package(manifest):
-                raise
-        for attempt in range(3):
-            if existing_package(manifest):
-                break
-            if attempt == 2:
-                raise PolicyError("uploaded artifact could not be verified")
-            time.sleep(1)
+            except PolicyError as error:
+                upload_error = error
+            for attempt in range(3):
+                if existing_package(manifest):
+                    break
+                if attempt == 2:
+                    raise PolicyError("uploaded artifact could not be verified") from upload_error
+                time.sleep(1)
+    if authorization:
+        recheck(repo, authorization, manifest)
     receipt = {"schema_version": 1, "package": manifest, "verified": True,
                "reused_existing": present, "verified_at": int(time.time()),
                "index": INDEXES[manifest["index"]][0],

@@ -197,10 +197,14 @@ def create_lock(bundle_paths, release_tag, source_branch, cicd_commit, versions_
                 'registries': registries}
     if set(images) != set(FIELDS) or set(sources) != {'noironetworks/aci-containers', 'noironetworks/opflex'} or len(upstream_ids) != 1:
         raise LockError('one complete nine-image release/upstream cohort is required')
+    locked_dependencies = dependencies(dependency_values)
+    consumer_refs = {item['reference'] for entry in images.values() for item in entry['registries'].values()}
+    if any(item['reference'] in consumer_refs for item in locked_dependencies):
+        raise LockError('dependency cannot duplicate a runtime consumer constraint')
     return {'schema_version': 1, 'release_tag': release_tag, 'source_branch': source_branch,
             'cicd_commit': cicd_commit, 'sources': sources,
             'images': {name: images[name] for name in sorted(images)},
-            'dependencies': dependencies(dependency_values)}
+            'dependencies': locked_dependencies}
 
 
 def main(argv=None):
