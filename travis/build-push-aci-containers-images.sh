@@ -49,18 +49,44 @@ if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
   OTHER_IMAGE_TAGS="${RELEASE_TAG_WITH_UPSTREAM_ID},${RELEASE_TAG_WITH_UPSTREAM_ID}.${GHA_DATE_TAG}.${TRAVIS_BUILD_NUMBER}"
 fi
 
+# Capture each actual Dockerfile base before any child build. In particular,
+# host and host-ovscni use ubi-minimal, while controller uses ubi. Pull each
+# resolved base once, then capture the same local input for every child target.
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && "${CI_EVIDENCE_MODE:-}" == "prepared-v1" ]]; then
+  BASE_IMAGES=(aci-containers-host aci-containers-host-ovscni aci-containers-controller cnideploy aci-containers-operator openvswitch aci-containers-webhook aci-containers-certmanager)
+  BASE_FILES=(host host controller cnideploy operator openvswitch webhook certmanager)
+  for ((base_index=0; base_index<${#BASE_IMAGES[@]}; base_index++)); do
+    python3 "$SCRIPTS_DIR/scan_result.py" capture-base \
+      --dockerfile "docker/travis/Dockerfile-${BASE_FILES[$base_index]}" \
+      --pull-once-file "${CI_ARTIFACT_DIR}/base-provenance/.pulled.json" \
+      --output "${CI_ARTIFACT_DIR}/base-provenance/${BASE_IMAGES[$base_index]}.json"
+  done
+fi
+
 rm -f \
   dist-static/iptables-bin.tar.gz \
   dist-static/iptables-libs.tar.gz \
   dist-static/iptables-wrapper-installer.sh
-docker/copy_iptables.sh ${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG} dist-static
+IPTABLES_BASE_REF="${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG}"
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && "${CI_EVIDENCE_MODE:-}" == "prepared-v1" ]]; then
+  : "${EXPECTED_OPFLEX_BASE_DIGEST:?EXPECTED_OPFLEX_BASE_DIGEST is required for the approved iptables input}"
+  [[ "${EXPECTED_OPFLEX_BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Invalid approved iptables build-base digest" >&2
+    exit 1
+  }
+  IPTABLES_BASE_REF="${IMAGE_BUILD_REGISTRY}/opflex-build-base@${EXPECTED_OPFLEX_BASE_DIGEST}"
+  python3 "$SCRIPTS_DIR/scan_result.py" capture-input \
+    --reference "${IPTABLES_BASE_REF}" --expected-digest "${EXPECTED_OPFLEX_BASE_DIGEST}" \
+    --output "${CI_ARTIFACT_DIR}/base-provenance/aci-iptables-base.json"
+fi
+docker/copy_iptables.sh "${IPTABLES_BASE_REF}" dist-static
 tar -tzf dist-static/iptables-bin.tar.gz >/dev/null
 tar -tzf dist-static/iptables-libs.tar.gz >/dev/null
 [[ -s dist-static/iptables-wrapper-installer.sh ]]
 
 if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
   docker container prune --force >/dev/null
-  docker image rm "${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG}" >/dev/null || true
+  docker image rm "${IPTABLES_BASE_REF}" >/dev/null || true
 fi
 
 make -C . all-static
