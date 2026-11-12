@@ -273,7 +273,7 @@ def validate_input_lock(lock, release_tag, observations):
                 raise PolicyError("consumer reference/digest is invalid")
             expected[ref] = digest
     dependencies = lock.get("dependencies", [])
-    if not isinstance(dependencies, list) or not any("/opflex-build-base" in d.get("reference", "") for d in dependencies):
+    if not isinstance(dependencies, list) or not any(re.fullmatch(r"quay\.io/noirolabs/opflex-build-base(?::[A-Za-z0-9][A-Za-z0-9_.-]*|@sha256:[0-9a-f]{64})", d.get("reference", "")) for d in dependencies):
         raise PolicyError("OpFlex build-base dependency must be locked")
     for item in dependencies:
         if not DIGEST.fullmatch(item.get("digest", "")) or not item.get("reference"):
@@ -558,6 +558,8 @@ def upload(manifest_path, receipt_path, authorization_path=None, repo=None, arti
     if manifest["cicd_commit"] != git(Path(__file__).resolve().parent, "rev-parse", "HEAD"):
         raise PolicyError("upload helper does not match the prepared CICD revision")
     authorization = None
+    if authorization_path and manifest["index"] != "pypi":
+        raise PolicyError("production upload context cannot select another package index")
     if manifest["index"] == "pypi":
         if not authorization_path or not repo:
             raise PolicyError("production authorization is required before upload")
@@ -609,12 +611,12 @@ def upload(manifest_path, receipt_path, authorization_path=None, repo=None, arti
                         env=env, timeout=180)
             except PolicyError as error:
                 upload_error = error
-            for attempt in range(3):
+            for attempt in range(5):
                 if existing_package(manifest):
                     break
-                if attempt == 2:
+                if attempt == 4:
                     raise PolicyError("uploaded artifact could not be verified") from upload_error
-                time.sleep(1)
+                time.sleep(2 ** (attempt + 1))
     if authorization:
         recheck(repo, authorization, manifest)
     receipt = {"schema_version": 1, "package": manifest, "verified": True,

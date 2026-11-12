@@ -525,6 +525,12 @@ raise SystemExit(23)
                 self.repo, artifact, self.policy_path, self.public_key)
 
 
+    def test_production_context_cannot_redirect_selected_credentials_to_testpypi(self):
+        self.preview_manifest()
+        with mock.patch.object(policy, 'existing_package', side_effect=AssertionError('must reject before index or upload')):
+            with self.assertRaises(policy.PolicyError):
+                policy.upload(self.manifest_path, self.dir / 'receipt.json', self.dir / 'authorization.json', self.repo)
+
     def test_runtime_constraint_cannot_be_overwritten_by_dependency(self):
         lock = copy.deepcopy(self.lock)
         item = copy.deepcopy(lock['images']['opflex']['registries']['quay.io/noiro'])
@@ -547,7 +553,7 @@ raise SystemExit(23)
              mock.patch.dict(os.environ, {'TWINE_USERNAME': '__token__', 'TWINE_PASSWORD': 'pypi-fixture-only'}):
             result = policy.upload(self.manifest_path, self.dir / 'receipt.json')
         self.assertTrue(result['verified']); self.assertEqual(lookup.call_count, 3)
-        wait.assert_called_once_with(1)
+        wait.assert_called_once_with(2)
 
     def test_preupload_remote_authorization_failure_is_never_reconciled_as_success(self):
         self.sign(); authorization = self.authorize()
