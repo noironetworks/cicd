@@ -1,1030 +1,501 @@
-# ACI Containers Build System Documentation
+# ACI Containers Build and Release Process
 
-## Table of Contents
+> **Implemented review stacks; merge and activation are pending.** Public source
+> baselines were refreshed on **2026-11-12**. The PRs below are unmerged proposals,
+> including changes exercised by local fixture tests.
+> Neither source inspection nor those tests proves deployed behavior. No target
+> pipeline has been demonstrated end to end, and no production rehearsal is
+> claimed. The process chapters describe the target in present tense; section 1
+> identifies the current source and the remaining gates.
 
-1. [Executive Summary](#executive-summary)
-2. [System Architecture](#system-architecture)
-3. [Build Process Overview](#build-process-overview)
-4. [Repository Details](#repository-details)
-5. [Build Timeline & Dependencies](#build-timeline--dependencies)
-6. [Container Images Reference](#container-images-reference)
-7. [Local Development Builds](#local-development-builds)
-8. [Troubleshooting](#troubleshooting)
-9. [Appendix](#appendix)
+**Scope:** both `mmr-6.1.1` and the default pipeline. Product defaults are `master`;
+shared `cicd` and `cicd-status` use `main`. Each line retains its release values.
+These baselines use MMR `6.1.1.8` and `cicd/main` `6.1.2.1`; neither is a requested bump.
 
----
+## Contents
 
-## Executive Summary
+1. [Status and baselines](#1-status-and-baselines)
+2. [Architecture and ownership](#2-architecture-and-ownership)
+3. [Release preparation](#3-release-preparation)
+4. [Validation and authorization](#4-validation-and-authorization)
+5. [Image publication](#5-image-publication)
+6. [Package publication](#6-package-publication)
+7. [Status, scans and provenance](#7-status-scans-and-provenance)
+8. [Recovery and validation](#8-recovery-and-validation)
+9. [Reference and activation](#9-reference-and-activation)
 
-The ACI Containers build system is an automated CI/CD pipeline that produces Docker containers and Python packages for the ACI CNI (Application Centric Infrastructure Container Network Interface) ecosystem. The system uses **Jenkins + Travis CI** orchestration where:
+## 1. Status and baselines
 
-1. **Jenkins** monitors GitHub pull requests and triggers git tag creation
-2. **Travis CI** detects tags and executes container builds
-3. **Container registries** receive and distribute the built images
+### 1.1 Public source snapshots
 
-### Key Metrics
-- **Number of Repositories**: 5 (aci-containers, opflex, acc-provision, acc-provision-operator, cicd)
-- **Container Images Produced**: 11 primary images
-- **Build Duration**: 1.5 - 2.5 hours
-- **Primary Registry**: quay.io/noirolabs
-- **Current Release**: <Release Tag>
+These are audited source revisions, not evidence of a live run or deployment.
 
----
+| Repository | `mmr-6.1.1` snapshot | Default snapshot |
+|---|---|---|
+| cicd | [`b186e92d`](https://github.com/noironetworks/cicd/commit/b186e92d4968aaf753ed26a43b76d23ab04d433d) | `main`: [`de12c4f7`](https://github.com/noironetworks/cicd/commit/de12c4f75c1377aa207d6adc6a78fcc2149f4299) |
+| aci-containers | [`2db91e1f`](https://github.com/noironetworks/aci-containers/commit/2db91e1f1f92d7cf30736cba40bdff95fe64f74b) | `master`: [`dd8b98e6`](https://github.com/noironetworks/aci-containers/commit/dd8b98e69de94b52cf86ae1e14178b9555d12912) |
+| opflex | [`8988eb64`](https://github.com/noironetworks/opflex/commit/8988eb64fa264427a63ff5dc6dab198107388f3a) | `master`: [`bf4812d4`](https://github.com/noironetworks/opflex/commit/bf4812d4f0bcf483cf17a7c1c160af908a1d411b) |
+| acc-provision | [`26c2577c`](https://github.com/noironetworks/acc-provision/commit/26c2577c8aac6a2d0938aec1d8b5e5db6110f694) | `master`: [`b0e73e4f`](https://github.com/noironetworks/acc-provision/commit/b0e73e4fe4c773909bc9b14ede7964ae16b02689) |
+| acc-provision-operator | [`fa49e7ee`](https://github.com/noironetworks/acc-provision-operator/commit/fa49e7ee4bc7c2e76d9cd09e45b37955ee846637) | `master`: [`e7f1526f`](https://github.com/noironetworks/acc-provision-operator/commit/e7f1526f61e95578523e5ad86ddbddeb0af9d22f) |
+| cicd-status | Shared portal and records | `main`: [`41700b45`](https://github.com/noironetworks/cicd-status/commit/41700b45e6f4edefb0c791d67c149d3df7b41f06) |
 
-## System Architecture
+The existing default-branch migration PRs remain a separate, unmerged source set:
+[cicd #90](https://github.com/noironetworks/cicd/pull/90) at `23ca5a10`,
+[OpFlex #698](https://github.com/noironetworks/opflex/pull/698) at `706c536a`,
+[ACI #1801](https://github.com/noironetworks/aci-containers/pull/1801) at `e638e058`,
+and [ACC #1470](https://github.com/noironetworks/acc-provision/pull/1470) at `076357b3`.
+Their presence is not proof that the default branches have migrated.
 
-### High-Level Flow
+The October 27 baseline is superseded. In particular, MMR cicd #88 has merged:
+the current MMR source uses the legacy per-image status helper and shared
+report files. ACI and OpFlex are **not** currently documented as using the old
+batched publisher. Scanning is **not** documented as advisory at the baseline.
 
-```
-┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│   GitHub    │      │   Jenkins   │      │  Travis CI  │      │  Registries │
-│             │──┬──▶│             │──┬──▶│             │──┬──▶│             │
-│  PR Merged  │  │   │  Tag Maker  │  │   │  Builder    │  │   │  Quay.io    │
-└─────────────┘  │   └─────────────┘  │   └─────────────┘  │   │  Docker.io  │
-                 │                     │                     │   └─────────────┘
-                 │                     │                     │
-                 └─────────────────────┴─────────────────────┘
-                           Automated Pipeline
-```
+### 1.2 Implemented, unmerged review stacks
 
-### Component Relationships
+These PRs contain implemented proposals. They are not merged or activated;
+local fixture tests are not deployment evidence. Hosted Linux results are reported
+separately. MMR provider retirement updates the existing guard PRs in place.
 
-```
-                    ┌──────────────────────┐
-                    │   cicd Repository    │
-                    │  (Shared Scripts)    │
-                    └──────────┬───────────┘
-                               │ Cloned by all builds
-            ┌──────────────────┼──────────────────┐
-            │                  │                  │
-    ┌───────▼────────┐ ┌───────▼────────┐ ┌──────▼───────────┐
-    │     opflex     │ │ aci-containers │ │  acc-provision   │
-    │   (Base Layer) │ │  (Core Layer)  │ │  (Tool Layer)    │
-    └───────┬────────┘ └───────┬────────┘ └──────┬───────────┘
-            │                  │                  │
-            │         ┌────────▼────────┐         │
-            │         │ acc-provision-  │         │
-            └────────▶│    operator     │◀────────┘
-                      │ (Orchestration) │
-                      └─────────────────┘
-```
+| Family | Repository / scope | MMR | Default pipeline |
+|---|---|---|---|
+| F1 helpers | cicd | [#91](https://github.com/noironetworks/cicd/pull/91) | [#92](https://github.com/noironetworks/cicd/pull/92) |
+| F2 provider retirement | opflex | [#691](https://github.com/noironetworks/opflex/pull/691) | [#699](https://github.com/noironetworks/opflex/pull/699) |
+| F2 provider retirement | aci-containers | [#1774](https://github.com/noironetworks/aci-containers/pull/1774) | [#1802](https://github.com/noironetworks/aci-containers/pull/1802) |
+| F2 provider retirement | acc-provision | [#1461](https://github.com/noironetworks/acc-provision/pull/1461) | [#1471](https://github.com/noironetworks/acc-provision/pull/1471) |
+| F2 retired-image policy | acc-provision-operator | [#56](https://github.com/noironetworks/acc-provision-operator/pull/56) | [#57](https://github.com/noironetworks/acc-provision-operator/pull/57) |
+| F1 callers | opflex | [#700](https://github.com/noironetworks/opflex/pull/700) | [#701](https://github.com/noironetworks/opflex/pull/701) |
+| F1 callers | aci-containers | [#1803](https://github.com/noironetworks/aci-containers/pull/1803) | [#1804](https://github.com/noironetworks/aci-containers/pull/1804) |
+| F1 callers | acc-provision | [#1472](https://github.com/noironetworks/acc-provision/pull/1472) | [#1473](https://github.com/noironetworks/acc-provision/pull/1473) |
+| F3 portal | cicd-status | Shared [#20](https://github.com/noironetworks/cicd-status/pull/20) | Same shared portal |
+| F4 CVE refresher | Owner deployment gated | Private team review | Private team review |
+| F6 / P1–P2 policy | cicd | [#93](https://github.com/noironetworks/cicd/pull/93) | [#94](https://github.com/noironetworks/cicd/pull/94) |
+| F5 scan helpers | cicd | [#95](https://github.com/noironetworks/cicd/pull/95) | [#96](https://github.com/noironetworks/cicd/pull/96) |
+| F5 advisory callers | opflex | [#702](https://github.com/noironetworks/opflex/pull/702) | [#703](https://github.com/noironetworks/opflex/pull/703) |
+| F5 advisory callers | aci-containers | [#1805](https://github.com/noironetworks/aci-containers/pull/1805) | [#1806](https://github.com/noironetworks/aci-containers/pull/1806) |
+| B1 immutable input child | opflex | [#704](https://github.com/noironetworks/opflex/pull/704) | [#705](https://github.com/noironetworks/opflex/pull/705) |
+| B1 immutable input child | aci-containers | [#1807](https://github.com/noironetworks/aci-containers/pull/1807) | [#1808](https://github.com/noironetworks/aci-containers/pull/1808) |
+| F7 guide | cicd | Shared [#86](https://github.com/noironetworks/cicd/pull/86) | Updated in place |
 
----
+**Selected MMR helper pin:** [`ed91df64e63184ab5a5171d0705062ae57c664a7`](https://github.com/noironetworks/cicd/blob/ed91df64e63184ab5a5171d0705062ae57c664a7/travis/ci_evidence.py).
+**Selected Default helper pin:** [`ed481aacc481c16aeee26290120b7a08a8680c67`](https://github.com/noironetworks/cicd/blob/ed481aacc481c16aeee26290120b7a08a8680c67/travis/ci_evidence.py).
+F1 callers retain fatal scan policy with these exact pins; advisory activation
+remains gated on deployed readers/refresher and separate caller PRs.
 
-## Build Process Overview
+### 1.3 Capability and current limitations
 
-### Jenkins Integration Details
+| Capability | Current evidence | Target / remaining gate |
+|---|---|---|
+| MMR tag-triggered GHA releases | Workflows exist alongside provider-selection/Travis paths | F2 removes provider selection; owner verifies external service settings |
+| ACI unit validation | [Run 43318463383](https://github.com/noironetworks/aci-containers/actions/runs/43318463383) fails in GBPserver with concurrent map writes; product/test code is unchanged | Existing product-test failure; policy checks do not establish release readiness |
+| Default-branch GHA migration | The four PR heads above are unmerged | Review both lines independently and preserve their versions |
+| Approved CICD revision | Branch-based selection remains in baseline workflows | F1 callers require an exact reviewed commit and verify checkout before credentials |
+| Image/status separation | Legacy helper runs per image; shared temporary reports can be overwritten | F1 retains each completed image's evidence and publishes a prepared bundle |
+| Scan outage behavior | Baseline scan failures can stop later publication | F1 retains fatal behavior; F5 advisory mode requires separate activation |
+| Scan result and freshness | Baseline portal consumes legacy severity fields | F3–F5 add explicit results; missing evidence never means zero findings |
+| ACC package publication | Baseline build/upload/status are coupled | F1/F6 separate build, upload and status jobs with retained bytes and receipts |
+| Production authorization | Existing signed-tag authority must be preserved and checked | F6 verifies the authorized key and identity plus committed inputs and tests |
+| Recovery | Full reruns can rebuild/re-push and fail after branch-head movement | F1/F6 add retained-evidence repair; this does not prove every full rerun is safe |
+| Consumer plain-tag readiness | Packages can refer to tags that need independent verification | F6 proposes verified promotion and locked-digest checks; owner activation and real-registry verification remain prerequisites |
+| Scheduled refresh | External job configuration, schedule and push wrapper are unverified | Owner installs F4 and removes any legacy force-push path |
+| Live controls | Jenkins settings, variables, signing policy, required checks and notifications are not established by this audit | Owners verify them before activation |
 
-**Important**: The Jenkins jobs are **freestyle jobs** configured in Jenkins UI and are **not part of the source code repositories**. They serve as the trigger mechanism for the entire build pipeline.
+Public source does not establish actual Jenkins tag creation, current repository
+variables, production key availability, scanner/registry access, branch
+protection, job schedules, or deployed portal assets. Local tests do not fill
+those gaps. Notification and missed-run monitor building blocks remain inactive
+until owners supply the destination, ownership and thresholds. No automatic
+notification service is claimed.
 
-#### Jenkins Job Architecture
+## 2. Architecture and ownership
 
-Each repository has a dedicated Jenkins freestyle job:
-- `aci-containers-build-job`
-- `opflex-build-job`
-- `acc-provision-build-job`
-- `acc-provision-operator-build-job`
+| Role | Responsibility |
+|---|---|
+| Release owners | Review version changes, source commits, dependency evidence and activation |
+| Jenkins owner | Verify external tag-producing configuration and release-line values |
+| Product GHA workflows | Run unprivileged tests; validate, build and publish the approved line |
+| Shared CICD scripts | Prepare evidence, apply policy and perform bounded status transactions |
+| Status repository and portal | Retain release records and display build/refresh observations |
+| Refresh owner | Operate the scheduled refresher and verify its configuration and publication path |
 
-#### Jenkins Job Configuration Requirements
+Jenkins remains the tag producer. GitHub Actions does not add a manual approval
+step or replace the existing production authority. Production approval is the
+valid release-tag signature from the authorized key and identity.
 
-**Source Code Management**:
-- Repository: `https://github.com/noironetworks/cicd`
-- Branch: `main` (or appropriate branch)
-- Purpose: Access shared build scripts
-
-**Build Triggers**:
-- GitHub webhook (monitors PR merge events)
-- Manual trigger (for emergency builds)
-
-**Environment Variables** (Must be configured in Jenkins):
-```bash
-RELEASE_TAG=<Release Tag>              # Current release version
-TRAVIS_TAG=<Release Tag>.81c2369       # Full tag to create
-TRAVIS_TAGGER=<github-token>     # GitHub personal access token
-TRAVIS_JOB_NUMBER=${BUILD_NUMBER} # Jenkins build number
-TRAVIS_JOB_WEB_URL=${BUILD_URL}  # Jenkins build URL
-```
-
-**Build Steps**:
-```bash
-# 1. Ensure we're in the cicd repository directory
-cd cicd
-
-# 2. Execute tag creation script
-bash travis/push-git-tag.sh <repository-name>
-
-# Examples:
-# bash travis/push-git-tag.sh aci-containers
-# bash travis/push-git-tag.sh opflex
-# bash travis/push-git-tag.sh acc-provision
-# bash travis/push-git-tag.sh acc-provision-operator
-```
-
-**Post-Build Actions**:
-- Archive console logs
-- Send notifications on failure
-
-#### How to Set Up a New Jenkins Job
-
-1. **Create Freestyle Project** in Jenkins
-2. **Configure Source Code Management**:
-   - Git repository: `https://github.com/noironetworks/cicd`
-3. **Configure Build Triggers**:
-   - GitHub hook trigger for GITScm polling
-4. **Add Environment Variables**:
-   - `RELEASE_TAG`
-   - `TRAVIS_TAG`
-   - `TRAVIS_TAGGER` (use Jenkins credentials binding)
-5. **Add Build Step** (Execute Shell):
-   ```bash
-   bash travis/push-git-tag.sh <repository-name>
-   ```
-6. **Test** with a dry-run or test repository
-
----
-
-### Stage 1: Pre-Build Trigger (Jenkins)
-
-**Duration**: ~2-5 minutes  
-**Trigger**: Pull Request merged to master/main branch
-
-**Jenkins Configuration**:
-- **Job Type**: Freestyle Jobs (defined in Jenkins UI, not in source code)
-- **One job per repository**: aci-containers, opflex, acc-provision, acc-provision-operator
-- **Tagging Script**: `cicd/travis/push-git-tag.sh`
-
-**Process**:
-1. GitHub webhook notifies Jenkins of merged PR
-2. Jenkins freestyle job is triggered for the repository
-3. Jenkins clones the `cicd` repository to get shared scripts
-4. Jenkins executes `cicd/travis/push-git-tag.sh <repo-name>` with:
-   - `$RELEASE_TAG` - Current release version (e.g., <Release Tag>)
-   - `$TRAVIS_TAG` - Full tag to create (e.g., <Release Tag>.81c2369)
-   - `$TRAVIS_TAGGER` - GitHub token for authentication
-5. Script creates annotated git tag with message:
-   ```
-   "ACI Release {RELEASE_TAG} Created by Travis Job {JOB_NUMBER} {JOB_URL}"
-   ```
-6. Tag is force-pushed to GitHub repository
-7. GitHub notifies Travis CI via webhook
-8. Travis CI build is triggered automatically
-
-**Tag Creation Details** (`push-git-tag.sh`):
-```bash
-#!/bin/bash
-REPO=$1  # Repository name (e.g., "aci-containers")
-git config --local user.name "travis-tagger"
-git config --local user.email "sumitnaiksatam+travis-tagger@gmail.com"
-git remote add travis-tagger https://travis-tagger:$TRAVIS_TAGGER@github.com/noironetworks/$REPO.git
-TAG_MESSAGE="ACI Release ${RELEASE_TAG} Created by Travis Job ${TRAVIS_JOB_NUMBER} ${TRAVIS_JOB_WEB_URL}"
-git tag -f -a ${TRAVIS_TAG} -m "${TAG_MESSAGE}"
-git push travis-tagger -f --tags
+```mermaid
+flowchart TD
+  inputs[Reviewed versions and source inputs] --> tests[Same-commit tests] --> images[OpFlex base, runtime and ACI preview publication]
+  images --> lock[Reviewed input lock committed in ACC source] --> tag[Annotated ACC tag on that source commit]
+  tag --> preview[Build and upload TestPyPI preview]
+  tag --> signed[Authorized signed production tag] --> promote[Owner-activated consumer digest promotion]
+  promote --> verify[Verify signature, lock, tests and consumer digests] --> package[Build retained production package]
+  package --> upload[Upload or reconcile identical package bytes] --> receipt[Verified upload receipt] --> status[Publish retained prepared status bundle]
 ```
 
-**Example Tags**:
-- `<Release Tag>` - Release tag
-- `<Release Tag>.81c2369` - Release + upstream ID
-- `<Release Tag>rc1` - Release candidate
-- `<Release Tag>.z` - Z-stream (continuous release)
+This target flow does not assert atomic publication across repositories or registries. Travis publication is retired in the target; a
+provider variable does not re-enable it. The retired `acc-provision-operator`
+repository has policy-test CI only, not an image producer.
 
-**Important Notes**:
-- Tags are created with `-f` (force) flag, allowing tag updates
-- Multiple repositories can be tagged in parallel by separate Jenkins jobs
-- Travis CI detects these tags and filters them in `check-git-tag.sh` to prevent duplicate builds
+## 3. Release preparation
 
-### Stage 2: Build Validation (Travis CI)
+### 3.1 Version and configuration update points
 
-**Duration**: ~1-2 minutes  
-**Component**: `cicd/travis/check-git-tag.sh`
+Review these together, separately for MMR and the default line:
 
-**Validation Steps**:
-1. **Tag Format Check**: Validates tag matches expected prefix (`<Release Tag>.*`)
-2. **Duplicate Prevention**: Checks if tag was created by Travis (prevents loops)
-3. **Environment Setup**: Exports build variables
+- `travis/globals.sh`: `RELEASE_TAG`.
+- Each product repository's `UPSTREAM_ID` Actions variable and source-branch selection.
+- ACI `EXPECTED_OPFLEX_BASE_DIGEST` binds to `vars.MMR611_OPFLEX_BASE_DIGEST` on MMR and `vars.MASTER_OPFLEX_BASE_DIGEST` on default: use that line's verified OpFlex base publication, never one global value across lines.
+- ACC `provision/setup.py`: package version.
+- ACC `provision/acc_provision/versions.yaml`: consumer image pins and their classification.
+- Every caller's exact `CICD_COMMIT` pin, matching the approved helper revision and release.
+- ACC `ci/release-inputs.json`: the reviewed input lock committed before tagging.
+- The authorized public signing policy/key files, without changing the existing authority.
+- External Jenkins release settings, explicitly verified by their owner.
 
-**Exit Codes**:
-- `0` - Proceed with build
-- `140` - Skip build (tag created by Travis or doesn't match)
-- `Non-zero` - Error, terminate build
+Any remaining placeholder fails before credentials; do not replace an exact pin
+with a moving branch. Owners verify source-branch overrides on both lines.
 
-### Stage 3: Container Building (Travis CI)
+### 3.2 Input lock and source identity
 
-**Duration**: ~40-80 minutes (depends on repository)
+`travis/create_release_lock.py` creates a reviewable lock from retained,
+hash-validated ACI and OpFlex bundles, `versions.yaml`, and an explicit OpFlex
+build-base dependency. The lock contains the release, source branch, exact CICD
+commit, producer commits/run identities, and supported image/dependency digests.
+Create image-producer tags first; owners then review and commit the lock before
+the ACC tag. The Jenkins owner verifies repository selection and stage order;
+tagging all repositories at once does not satisfy this target process.
 
-#### Build Matrix by Repository
+The lock excludes its enclosing ACC source SHA and tag-object ID. Including the
+hash of the commit containing the lock would be recursive. Runtime verification
+binds the committed lock to the tagged ACC source and records the source and tag
+object separately. Editing a working-tree lock after tagging fails verification.
 
-| Repository | Duration | Parallel Builds | Dependencies |
-|------------|----------|-----------------|--------------|
-| opflex | 15-20 min | 1-3 containers | None (foundation) |
-| aci-containers | 25-40 min | 8 containers | opflex-build-base |
-| acc-provision-operator | 10-15 min | 1 container | acc-provision package |
-| acc-provision | 15-20 min | Python package | aci-containers artifacts |
+### 3.3 Supported inputs
 
-### Stage 4: Post-Build Actions
+The supported set is nine runtimes plus `opflex-build-base` (section 9.1).
+The lock requires producer/registry identity, not a mutable alias or workflow name.
 
-**Duration**: ~2-5 minutes
+`gbp_version` and `opflex_server_version` have no supported producer in this
+release path. Classify historical pins before relying on them. The retired
+`acc-provision-operator` is distinct from the supported `aci-containers-operator`.
 
-**Actions**:
-1. **Registry Push**: Multi-registry push (quay.io/noirolabs, quay.io/noiro, docker.io/noiro)
-2. **Status Update**: Update cicd-status repository with build metadata
-3. **Version Coordination**: Update downstream dependencies
-4. **Artifact Publishing**: Push to PyPI (acc-provision only)
+## 4. Validation and authorization
 
----
+### 4.1 Unprivileged validation
 
-## Repository Details
+Product tests retain these check names:
 
-### 1. opflex Repository
+- ACC: `Lint and unit tests`.
+- ACI: `aci-containers unit tests`.
+- OpFlex: `OpFlex unit tests`.
 
-**Purpose**: OpFlex protocol implementation and agent  
-**Language**: C++  
-**Build Tool**: CMake + Make + Maven (for Genie)
+`CI policy fixtures` runs the workflow/source guards on Linux, with pinned test
+tooling and no production credentials. Shared CICD, portal and refresher changes
+have their own CI. Required-check configuration and successful hosted runs are
+separate evidence; a source file alone does not make a check required.
 
-#### Containers Built
+### 4.2 Tag and helper checks
 
-1. **opflex-build-base** (Special Build)
-   - **Purpose**: Build environment with all dependencies
-   - **Trigger**: Tag contains "opflex-build-base"
-   - **Base Image**: registry.access.redhat.com/ubi9/ubi-minimal
-   - **Size**: ~1.2 GB
-   - **Contents**: GCC, Boost, CMake, Maven, all dev libraries
+A release tag has numeric form `N.N.N.N`, is annotated, resolves to the intended
+source commit, and agrees with the selected CICD `RELEASE_TAG`. `UPSTREAM_ID` is
+present and well formed. The caller fetches the exact reviewed CICD commit and
+verifies `HEAD` before publication credentials become available.
 
-2. **opflex-build** (Development Image)
-   - **Purpose**: Intermediate build artifacts
-   - **Dependencies**: opflex-build-base
-   - **Contents**: Compiled libraries, headers
+Initial branch-head checks remain visible in the current caller proposals.
+Status-only recovery uses retained source identity; it does not replay the full
+build workflow or claim that a moved branch is harmless to every rerun.
 
-3. **opflex** (Production Image)
-   - **Purpose**: Runtime agent
-   - **Base Image**: UBI 9 minimal
-   - **Size**: ~300 MB
-   - **Key Binaries**:
-     - `opflex_agent` - Main agent process
-     - `mcast_daemon` - Multicast daemon
-     - `gbp_inspect` - Group-based policy inspector
-     - `opflex_server` - OpFlex server
+### 4.3 Production authority
 
-#### Local Build Instructions
+An authorized maintainer signs the release tag on the **same ACC source commit**.
+This changes the **tag object**, not the source commit or committed input lock.
+The new object selects production publication. After production, release owners
+freeze the tag and source identity. This guide provides no tag-replacement or
+signature-bypass procedure.
 
-```bash
-# Clone repository
-cd opflex
+`travis/release_policy.py` verifies a valid signature from the authorized key and
+identity, the signed source's committed lock, matching helper revision, package
+identity, dependency observations and required same-commit checks. It rejects
+missing, skipped, neutral, failed or stale authorization evidence. The uploader
+rechecks the approved identity before using a package credential. No manual
+GitHub approval is introduced.
 
-# Option 1: Build using Travis script (recommended)
-export DOCKER_HUB_ID=myregistry
-export DOCKER_TAG=local-test
-./docker/travis/build-opflex-travis.sh $DOCKER_HUB_ID $DOCKER_TAG
+## 5. Image publication
 
-# Option 2: Manual build
-# First build the base image
-docker build -t myregistry/opflex-build-base:local \
-  -f docker/travis/Dockerfile-opflex-build-base .
+### 5.1 Dependency order
 
-# Generate model code
-cd genie
-mvn compile exec:java
-cd ..
+OpFlex publishes its build-base dependency first. Runtime and ACI consume the
+approved base identity, and retained evidence associates each runtime image with
+its actual build-time base. ACI host images use the minimal base, not the
+controller's full base. Missing pre-build base provenance is unavailable evidence,
+not a guessed digest.
 
-# Build opflex-build
-docker build -t myregistry/opflex-build:local \
-  -f docker/travis/Dockerfile-opflex-build .
+The proposed OpFlex input children pass `OPFLEX_BUILD_BASE_IMAGE` as an immutable
+`repository@digest` into `Dockerfile-opflex-build` in prepared runtime mode. The
+legacy tag remains the Dockerfile default outside that mode. The MMR phase and
+pre-Maven digest checks are preserved. The default line still requires the
+author-owned phase fix; these input children do not copy it or claim to fix that
+blocker. Shell/Docker fixtures do not establish an end-to-end real build.
 
-# Build final opflex image
-docker build -t myregistry/opflex:local \
-  -f docker/travis/Dockerfile-opflex .
+### 5.2 Tag order and partial failure
+
+The external tag formats remain `<release>.<upstream>`,
+`<release>.<upstream>.MMDDYY.<run_number>`, and `<release>.<upstream>.z`.
+A retry attempt keeps its original run number; run ID, run number and attempt
+remain distinct provenance fields.
+
+The target publishes and verifies per-registry digests before moving consumer
+`.z` aliases; the downstream-readable noirolabs `.z` moves **last**. This orders
+publication; it does not make a multi-registry operation atomic or authorize
+production consumer plain tags.
+
+A partial push is a critical forward-only recovery case. Earlier registry writes
+remain published. Retained evidence identifies the completed image prefix; logs
+and registry observations establish the failing image's actual partial writes.
+The run fails visibly and later images stop under fatal policy. Recovery uses
+those recorded inputs and observed digests. It does not roll back published tags,
+force-push status history, or declare an incomplete image set ready.
+
+### 5.3 Consumer plain tags
+
+Production uses approved consumer plain tags on Quay and Docker Hub. F6 proposes
+`travis/promote_consumer_images.py`: it verifies the existing authorized signature
+and locked test cohort before opening registry auth files, preflights every source
+and destination, and copies immutable manifests without rebuilding or replacing
+conflicting tags. A retained receipt supports forward resume after partial work.
+
+Promotion precedes package production authorization. It is not automatic in the
+caller workflows: the owner first configures the cohort, destinations and scoped
+auth files. This operator command uses the approved checkout and retained evidence;
+it adds no manual GitHub approval and does not change the signing authority:
+
+```sh
+python3 "$APPROVED_CICD_CHECKOUT/travis/release_policy.py" collect-cohort-checks \
+  --policy "$APPROVED_CICD_CHECKOUT/travis/release-policy.json" \
+  --lock "$APPROVED_ACC_CHECKOUT/ci/release-inputs.json" \
+  --source-sha "$APPROVED_ACC_SOURCE_SHA" --output "$RETAINED_COHORT_CHECKS"
+python3 "$APPROVED_CICD_CHECKOUT/travis/promote_consumer_images.py" \
+  --repository "$APPROVED_ACC_CHECKOUT" --tag "$RELEASE_TAG" \
+  --policy "$APPROVED_CICD_CHECKOUT/travis/release-policy.json" \
+  --public-key "$AUTHORIZED_PUBLIC_KEY_FILE" \
+  --lock "$APPROVED_ACC_CHECKOUT/ci/release-inputs.json" \
+  --checks "$RETAINED_COHORT_CHECKS" --receipt "$PROMOTION_RECEIPT" \
+  --quay-authfile "$QUAY_CONSUMER_AUTHFILE" --docker-authfile "$DOCKER_CONSUMER_AUTHFILE"
 ```
 
-**Build Environment Variables**:
-- `OPFLEX_BRANCH`: Source branch (default: kmr2-5.2.7)
-- `DOCKER_HUB_ID`: Registry prefix
-- `DOCKER_TAG`: Image tag
-- `UPSTREAM_ID`: Upstream commit ID (default: 81c2369)
+The policy re-observes consumer digests before package upload. Local promoter
+fixtures are not proof that real registry promotion or this activation has run.
 
----
+## 6. Package publication
 
-### 2. aci-containers Repository
+### 6.1 Selection and retained bytes
 
-**Purpose**: Main CNI implementation, controllers, and operators  
-**Language**: Go (1.25.0)  
-**Build Tool**: Make + Go build
+The tag selects exactly one package index through the existing publication mode.
+`release to test.pypi.org` selects preview; `release to pypi.org` selects production.
+Ambiguous selection fails. Existing RC naming and release/RC status semantics
+remain separate modes; a preview is not silently promoted by rebuilding it.
 
-#### Containers Built
+Preview uses `<release>.dev<run_number>` and preview image references. Production
+uses `<release>` and locked consumer plain references. The builder sets the final
+version before creating the source distribution and records filename, size,
+SHA-256, source commit, helper commit and index in `package-manifest.json`.
 
-1. **aci-containers-controller**
-   - **Purpose**: Main Kubernetes controller
-   - **Binary**: `dist-static/aci-containers-controller`
-   - **Additional Tools**: kubectl, istioctl
-   - **Config**: `/usr/local/etc/aci-containers/controller.conf`
+Production builds `acikubectl` from the ACI commit in the signed input lock and
+records the actual ACI source SHA in the package manifest. Authorization and
+upload reject a mismatch. These strict locked-input gates are production-only;
+preview retains its existing input route.
 
-2. **aci-containers-host**
-   - **Purpose**: Host agent (without OVS CNI)
-   - **Binary**: `dist-static/aci-containers-host-agent`
-   - **Target**: `without-ovscni` (multi-stage build)
+### 6.2 Three separate jobs
 
-3. **aci-containers-host-ovscni**
-   - **Purpose**: Host agent with OVS CNI support
-   - **Binary**: Same as above + CNI plugins
-   - **Target**: `with-ovscni` (multi-stage build)
+1. **Build:** validate inputs and create the retained package, manifest and prepared
+   status bundle. This job has neither package-upload nor status-write credentials.
+2. **Upload:** retrieve the retained bytes, validate their manifest, apply production
+   policy when needed, and upload or reconcile the exact existing file. Only this
+   job's upload step receives its package credential.
+3. **Status:** consume the retained bundle and a verified upload receipt. Only the
+   status publication step receives its status credential; it does not rebuild,
+   rescan, upload, or query the package index.
 
-4. **aci-containers-operator**
-   - **Purpose**: Kubernetes operator for ACI CNI
-   - **Binary**: `dist-static/aci-containers-operator`
+Producer-job outputs retain the prepared-artifact name, receipt-artifact name and
+original evidence attempt. A failed-jobs rerun uses those outputs rather than
+inventing artifact names or comparing against the repair job's newer attempt.
 
-5. **aci-containers-webhook**
-   - **Purpose**: Admission webhook for validation
-   - **Binary**: `dist-static/aci-containers-webhook`
-   - **Launcher**: `launch-webhook.sh`
+The selected TestPyPI/PyPI secret bindings migrate to index-scoped API tokens
+before activation. The uploader uses literal username `__token__`; legacy account
+passwords are rejected. Owners verify bindings without exposing their values.
 
-6. **aci-containers-certmanager**
-   - **Purpose**: Certificate management
-   - **Binary**: `dist-static/aci-containers-certmanager`
-   - **Launcher**: `launch-certmanager.sh`
+### 6.3 Existing package versions
 
-7. **cnideploy**
-   - **Purpose**: CNI deployment tool
-   - **Note**: Minimal image for deployment tasks
+`release_policy.py upload` compares the retained filename and SHA-256 with the
+package index. An identical existing file is accepted as already uploaded; a
+mismatch stops. The verified receipt binds the package, official index, source
+and CICD identities. Production additionally binds the signed tag object and
+input-lock hash. A different corrected file requires an owner-selected new
+version, not replacement under an existing filename.
 
-8. **openvswitch**
-   - **Purpose**: Open vSwitch for networking
-   - **Build**: Two-stage (base + final)
-   - **Binaries**: ovs-vswitchd, ovsdb-server, ovs-vsctl, ovsresync
-   - **Launcher**: `launch-ovs.sh`
+## 7. Status, scans and provenance
 
-#### Local Build Instructions
+### 7.1 Prepared bundle API
 
-```bash
-# Clone repository
-cd aci-containers
+`travis/ci_evidence.py prepare-images` and `prepare-package` construct a local
+bundle with manifest, hashes, source/helper/run identities and retained artifacts.
+Preparation is the observation stage and may invoke Docker or inspect existing
+status for release/RC carry-forward. It runs without a status-write credential.
 
-# Install Go dependencies
-make goinstall
+`ci_evidence.py publish` validates and merges the retained bundle into a fresh
+status checkout. Trusted caller scope fixes release, kind, full stream name,
+source/helper commits, original run identity and allowed image set; these values
+never come from the bundle being validated. Packages also require `--receipt`.
+This data-only stage
+has no Docker/scanner/package-index observation. It seeds missing release/stream
+entries, preserves unrelated records and uses bounded fresh-clone normal-push
+retries. Reapplying the same verified bundle is idempotent. A status error remains
+a failure even when artifact publication succeeded.
 
-# Build all static binaries
-make all-static
+Image preparation and status can retain a successful prefix after a later image
+fails. This proposed behavior replaces the baseline legacy per-image helper and
+shared temporary report handling; it is not a claim about deployed MMR behavior.
 
-# This creates binaries in dist-static/:
-# - aci-containers-host-agent
-# - aci-containers-host-agent-ovscni
-# - opflex-agent-cni
-# - netop-cni
-# - aci-containers-controller
-# - ovsresync
-# - gbpserver
-# - aci-containers-operator
-# - aci-containers-webhook
-# - aci-containers-certmanager
+### 7.2 Explicit scanner policy
 
-# Build individual container (example: controller)
-docker build -t myregistry/aci-containers-controller:local \
-  -f docker/travis/Dockerfile-controller .
+`CI_EVIDENCE_MODE=prepared-v1` selects the proposed prepared publisher contract.
+`CI_SCAN_POLICY=fatal` is the default: scanner failure stops publication. Enabling
+prepared evidence does **not** enable advisory scanning.
 
-# Build OpenVSwitch
-./docker/travis/build-openvswitch-travis.sh myregistry local-test
+`CI_SCAN_POLICY=advisory` is a separately reviewed activation. In that mode scan
+outages are explicit observations while publication can continue. Registry or
+status failures still fail. No placeholder report or parse failure becomes a
+clean scan with zero findings. F5 must be paired with its consumer contract;
+legacy parsing alone does not provide this guarantee.
 
-# Build all containers using the main script
-export DOCKER_BUILDKIT=1
-export IMAGE_BUILD_REGISTRY=myregistry
-export IMAGE_TAG=local-test
-export UPSTREAM_ID=81c2369
+### 7.3 Build and refresh observations
 
-# Copy iptables from base image
-docker/copy_iptables.sh quay.io/noirolabs/opflex-build-base:<Release Tag>.81c2369.z dist-static
+The F5 advisory contract gives each image independent `scan.build` and
+`scan.refresh` namespaces, each with `image` and `base` observations. Result is one of `ok`, `unavailable`, `queued`,
+`unsupported`, or `error`. Counts exist only for valid completed evidence.
+Scanner, digest, observation time and report identify the evidence being shown.
 
-# Build each container
-docker build -t $IMAGE_BUILD_REGISTRY/cnideploy:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-cnideploy .
+Freshness is separate: `fresh`, `stale`, or `unknown`. Without an explicit positive
+age policy, freshness is **unknown**. A published fresh observation expires under
+that policy; freshness never changes a failed result into success. Historical
+`last_success` retains its own digest, timestamp and report and is labeled
+historical, not current. Legacy records remain readable.
 
-docker build -t $IMAGE_BUILD_REGISTRY/aci-containers-controller:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-controller .
+The scheduled refresher writes only its refresh namespace and retained reports.
+It keeps build-time base A intact when the mutable tag now resolves to B, records
+B separately, and chooses the correct `linux/amd64` child manifest for scanning.
+A stale scan of image A cannot replace a newer build B. These are F4 proposals;
+the external owner must verify its deployed launcher, schedule, concurrency,
+timeouts and normal-push path before activation.
 
-docker build --target without-ovscni \
-  -t $IMAGE_BUILD_REGISTRY/aci-containers-host:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-host .
+### 7.4 Retention and archive limits
 
-docker build --target with-ovscni \
-  -t $IMAGE_BUILD_REGISTRY/aci-containers-host-ovscni:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-host .
+Status Git retains release rows, component-index source/CICD/bundle-hash evidence and canonical run history.
+Package rows retain link/tag/source/build-log fields; the package SHA-256, full manifest and verified receipt do not persist there.
+Bundle/package/manifest/receipt artifacts currently have the workflow's 14-day retention.
+Owners archive and verify them before expiry when longer repair is required.
+No durable archive destination or completed archive verification is claimed here.
 
-docker build -t $IMAGE_BUILD_REGISTRY/aci-containers-operator:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-operator .
+## 8. Recovery and validation
 
-docker build -t $IMAGE_BUILD_REGISTRY/aci-containers-webhook:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-webhook .
+### 8.1 Status-only package repair
 
-docker build -t $IMAGE_BUILD_REGISTRY/aci-containers-certmanager:$IMAGE_TAG \
-  -f docker/travis/Dockerfile-certmanager .
+Use the already retained prepared bundle and verified upload receipt with the
+same approved helper revision. The owner verifies the destination before the
+write; variable names below stand for reviewed values, not default destinations.
+
+```sh
+python3 "$APPROVED_CICD_CHECKOUT/travis/ci_evidence.py" publish \
+  --bundle "$RETAINED_STATUS_BUNDLE" \
+  --receipt "$VERIFIED_UPLOAD_RECEIPT" \
+  --expected-release-tag "$APPROVED_RELEASE_TAG" --expected-kind package \
+  --expected-stream "$APPROVED_RELEASE_STREAM" \
+  --expected-source-repository "$APPROVED_SOURCE_REPOSITORY" \
+  --expected-source-sha "$APPROVED_SOURCE_SHA" --expected-cicd-sha "$APPROVED_CICD_SHA" \
+  --expected-run-id "$ORIGINAL_RUN_ID" --expected-run-attempt "$ORIGINAL_RUN_ATTEMPT" \
+  --expected-images "$APPROVED_RUNTIME_IMAGES" \
+  --repository "$VERIFIED_STATUS_REPOSITORY" \
+  --branch "$VERIFIED_STATUS_BRANCH"
 ```
 
-**Makefile Targets**:
-```bash
-make all            # Build all binaries
-make all-static     # Build static binaries (for containers)
-make check          # Run tests with coverage
-make goinstall      # Install Go dependencies
-make clean          # Clean build artifacts
-make vendor         # Update vendor dependencies
+The expected scope comes from approved source/run records, not bundle fields.
+The full stream is `<release>.z`, `<release>`, or `<release>.rcN`; the package image
+CSV is empty for preview and contains all nine runtimes for release/RC.
+This command does not prepare a new bundle or use a package credential. A
+missing/mismatched receipt fails. If the receipt was lost, index reconciliation
+through the approved upload policy is a separate, explicitly scoped operation;
+it verifies identical bytes and produces a receipt before status repair.
+Re-running `prepare-package` is not status-only repair: release/RC preparation
+performs observations and can create different evidence.
+
+### 8.2 Local checks
+
+Run these in the corresponding reviewed proposed checkout. They use fixtures;
+they do not qualify a production release or establish a live deployment.
+
+```sh
+# Shared CICD helpers and policy (Python 3.12 or later).
+python3 -m pip install -r requirements-test.txt
+python3 -m unittest discover -s tests -v
+
+# Each product checkout, including the retired operator's policy CI.
+python3 -m pip install -r tests/ci/requirements.txt 'PyYAML==6.0.2'
+python3 -m unittest discover -s tests/ci -v
+
+# Portal checkout, using Node 22.14.0.
+npm ci
+npm test
+npx playwright install chromium
+npm run test:browser
 ```
 
----
-
-### 3. acc-provision Repository
-
-**Purpose**: ACI provisioning tool (Python CLI)  
-**Language**: Python 3.9  
-**Build Tool**: setuptools
-
-#### Artifacts Produced
-
-1. **Python Package** (PyPI)
-   - Package name: `acc_provision`
-   - Current version: 6.1.1.5 (updated during build)
-   - Includes: `acikubectl` binary from aci-containers
-
-#### Local Build Instructions
-
-```bash
-# Clone repository
-cd acc-provision/provision
-
-# Install in development mode
-pip install -e .
-
-# Or build distribution
-python3 setup.py sdist bdist_wheel
-
-# Build package with specific version
-VERSION=<Release Tag>
-sed -i "s/6.1.1.5/${VERSION}/" setup.py
-python3 setup.py sdist bdist_wheel
-
-# Test installation
-pip install dist/acc_provision-${VERSION}.tar.gz
-
-# Run tool
-acc-provision --help
-```
-
-**Build Process in CI**:
-1. Clone aci-containers repository at same tag
-2. Build `acikubectl` binary from aci-containers
-3. Copy `acikubectl` to `provision/bin/`
-4. Update version in setup.py to match tag
-5. Query Quay.io for latest container image tags
-6. Update `acc_provision/versions.yaml` with latest tags
-7. Build Python package
-8. Push to PyPI (production) or test.pypi.org (dev)
-
-**Version Synchronization**: acc-provision queries container registries to find the latest available versions:
-```bash
-# Example: Find latest acc-provision-operator tag
-curl -L -s 'https://quay.io/api/v1/repository/noiro/acc-provision-operator/tag/' | \
-  jq -r '.tags[] | select(.name==$ENV.UPSTREAM_IMAGE_Z_TAG) | .manifest_digest'
-```
-
----
-
-### 4. acc-provision-operator Repository
-
-**Purpose**: Kubernetes operator for acc-provision  
-**Language**: Ansible + Python  
-**Build Tool**: Docker + Operator SDK
-
-#### Container Built
-
-1. **acc-provision-operator**
-   - **Base Image**: Ansible Operator base
-   - **Purpose**: Watches AccProvisionInput CRD, generates ACI CNI deployment
-   - **Includes**: acc-provision Python package (cloned during build)
-
-#### Local Build Instructions
-
-```bash
-# Clone repository
-cd acc-provision-operator
-
-# Build container
-docker build -t myregistry/acc-provision-operator:local .
-
-# Or use Makefile
-make docker-build IMG=myregistry/acc-provision-operator:local
-
-# Test with molecule
-pip3 install docker molecule openshift jmespath
-make test
-```
-
-**Build Args**:
-- `ACC_PROVISION_BRANCH`: Branch of acc-provision to include (default from Dockerfile)
-
----
-
-### 5. cicd Repository
-
-**Purpose**: Shared build scripts and utilities  
-**Language**: Bash + Python  
-**Key Scripts**:
-
-| Script | Purpose |
-|--------|---------|
-| `check-git-tag.sh` | Validates git tag format and prevents loops |
-| `globals.sh` | Global configuration (release tags, registries) |
-| `build-push-aci-containers-images.sh` | Builds aci-containers containers |
-| `build-push-opflex-images.sh` | Builds opflex containers |
-| `build-push-acc-provision-operator-image.sh` | Builds operator container |
-| `build-acc-provision.sh` | Builds acc-provision package |
-| `push-images.sh` | Pushes images to multiple registries |
-| `push-to-cicd-status.sh` | Updates build status repository |
-| `push-to-pypi.sh` | Publishes Python package to PyPI |
-
-**Configuration in globals.sh**:
-```bash
-RELEASE_TAG="<Release Tag>"
-UPSTREAM_ID=81c2369
-QUAY_REGISTRY=quay.io/noirolabs
-QUAY_NOIRO_REGISTRY=quay.io/noiro
-DOCKER_REGISTRY=docker.io/noiro
-```
-
----
-
-## Build Timeline & Dependencies
-
-### Dependency Graph
-
-```
-                        TIME →
-                        
-T=0min     T=20min          T=40min             T=60min            T=80min
-  │          │                │                   │                  │
-  │          │                │                   │                  │
-┌─▼──────────▼─┐              │                   │                  │
-│   opflex     │              │                   │                   │
-│ build-base   │              │                   │                  │
-└──────┬───────┘              │                   │                  │
-       │                      │                   │                  │
-       │ (Image: opflex-build-base:<Release Tag>.81c2369)                 │
-       │                      │                   │                  │
-   ┌───▼────────────────┐     │                   │                  │
-   │  opflex, opflex-   │     │                   │                  │
-   │  build containers  │     │                   │                  │
-   └───────┬────────────┘     │                   │                  │
-           │                  │                   │                  │
-           │ (Images: opflex:<Release Tag>.81c2369, opflex-build:<Release Tag>.81c2369)
-           │                  │                   │                  │
-           │    ┌─────────────▼───────────────┐   │                  │
-           │    │  aci-containers (8 images)  │   │                  │
-           │    │  - controller                │   │                  │
-           │    │  - host / host-ovscni       │   │                  │
-           └───▶│  - operator                 │   │                  │
-                │  - webhook / certmanager    │   │                  │
-                │  - cnideploy                │   │                  │
-                │  - openvswitch              │   │                  │
-                └──────┬──────────────────────┘   │                  │
-                       │                          │                  │
-                       │ (All images tagged: <Release Tag>.81c2369)       │
-                       │                          │                  │
-         ┌─────────────┴────────────┐             │                  │
-         │                          │             │                  │
-    ┌────▼──────────────┐   ┌───────▼──────────┐ │                  │
-    │ acc-provision-    │   │  acc-provision   │ │                  │
-    │    operator       │   │   (Python pkg)   │ │                  │
-    └───────────────────┘   └──────────────────┘ │                  │
-                                                  │                  │
-                                    ┌─────────────▼────────────────┐ │
-                                    │  cicd-status repo updated    │ │
-                                    │  (Build metadata, links)     │ │
-                                    └──────────────────────────────┘ │
-                                                                     │
-                                                   ┌─────────────────▼─┐
-                                                   │  Build Complete   │
-                                                   └───────────────────┘
-```
-
-### Critical Path Analysis
-
-**Sequential Dependencies**:
-1. `opflex-build-base` → `opflex` → `aci-containers` → `acc-provision`
-2. `aci-containers` → `acc-provision-operator`
-
-**Parallel Opportunities**:
-- Once opflex images are complete, both aci-containers AND other independent builds can proceed
-- acc-provision-operator and acc-provision can build in parallel (both depend on aci-containers)
-
-**Bottleneck**: aci-containers build (8 containers, ~25-40 minutes)
-
----
-
-## Container Images Reference
-
-### Production Image Specifications
-
-| Image | Size | Base | Language | Entry Point | Config |
-|-------|------|------|----------|-------------|--------|
-| opflex-build-base | ~1.2 GB | UBI9 minimal | C++ | - | Build only |
-| opflex | ~300 MB | UBI9 minimal | C++ | opflex_agent | /usr/local/etc/opflex-agent-ovs/base-conf.d/ |
-| aci-containers-controller | ~450 MB | UBI9 | Go | aci-containers-controller | /usr/local/etc/aci-containers/controller.conf |
-| aci-containers-host | ~200 MB | UBI9 minimal | Go | aci-containers-host-agent | /usr/local/etc/aci-containers/host-agent.conf |
-| aci-containers-host-ovscni | ~220 MB | UBI9 minimal | Go | aci-containers-host-agent | /usr/local/etc/aci-containers/host-agent.conf |
-| aci-containers-operator | ~400 MB | UBI9 | Go | aci-containers-operator | /usr/local/etc/aci-containers/operator.conf |
-| aci-containers-webhook | ~180 MB | UBI9 | Go | launch-webhook.sh | - |
-| aci-containers-certmanager | ~180 MB | UBI9 | Go | launch-certmanager.sh | - |
-| cnideploy | ~150 MB | UBI9 | - | - | Deployment only |
-| openvswitch | ~250 MB | UBI9 | C | launch-ovs.sh | - |
-| acc-provision-operator | ~500 MB | Ansible Operator | Ansible/Python | ansible-operator | watches.yaml |
-
-### Image Tagging Strategy
-
-**Tag Format**: `{RELEASE}.{UPSTREAM_ID}[.{SUFFIX}]`
-
-**Examples**:
-- `<Release Tag>.81c2369` - Standard release tag
-- `<Release Tag>.81c2369.110425.12345` - With date and build number
-- `<Release Tag>.81c2369.z` - Z-stream (latest stable)
-- `<Release Tag>.81c2369.rc1` - Release candidate
-
-**Registry Distribution**:
-```
-quay.io/noirolabs/{image}:{tag}      ← Primary (built by Travis)
-quay.io/noiro/{image}:{tag}          ← Mirror with extended tags
-docker.io/noiro/{image}:{tag}        ← Public mirror
-```
-
----
-
-## Local Development Builds
-
-### Prerequisites
-
-**Required Tools**:
-- Docker (with buildx support)
-- Go 1.25.0 (for aci-containers)
-- Python 3.9+ (for acc-provision)
-- Maven (for opflex Genie)
-- Git
-
-**Optional Tools**:
-- kind/minikube (for local Kubernetes testing)
-- make
-- jq (for API queries)
-
-### Quick Start: Build All Containers Locally
-
-```bash
-#!/bin/bash
-# Complete local build script
-
-set -e
-
-REGISTRY="localhost:5000"  # Or your local registry
-TAG="dev-$(date +%Y%m%d)"
-
-# 1. Build opflex
-echo "Building opflex..."
-cd /path/to/opflex
-./docker/travis/build-opflex-travis.sh $REGISTRY $TAG
-
-# 2. Build aci-containers
-echo "Building aci-containers..."
-cd /path/to/aci-containers
-
-# Copy iptables from opflex-build-base
-docker/copy_iptables.sh $REGISTRY/opflex-build-base:$TAG dist-static
-
-# Build binaries
-make all-static
-
-# Build containers
-export DOCKER_BUILDKIT=1
-docker build -t $REGISTRY/cnideploy:$TAG -f docker/travis/Dockerfile-cnideploy .
-docker build -t $REGISTRY/aci-containers-controller:$TAG -f docker/travis/Dockerfile-controller .
-docker build --target without-ovscni -t $REGISTRY/aci-containers-host:$TAG -f docker/travis/Dockerfile-host .
-docker build --target with-ovscni -t $REGISTRY/aci-containers-host-ovscni:$TAG -f docker/travis/Dockerfile-host .
-docker build -t $REGISTRY/aci-containers-operator:$TAG -f docker/travis/Dockerfile-operator .
-docker build -t $REGISTRY/aci-containers-webhook:$TAG -f docker/travis/Dockerfile-webhook .
-docker build -t $REGISTRY/aci-containers-certmanager:$TAG -f docker/travis/Dockerfile-certmanager .
-
-# Build OpenVSwitch
-./docker/travis/build-openvswitch-travis.sh $REGISTRY $TAG
-
-# 3. Build acc-provision-operator
-echo "Building acc-provision-operator..."
-cd /path/to/acc-provision-operator
-docker build -t $REGISTRY/acc-provision-operator:$TAG .
-
-# 4. Build acc-provision package
-echo "Building acc-provision..."
-cd /path/to/acc-provision/provision
-pip install -e .
-
-echo "All builds complete!"
-echo "Images tagged with: $TAG"
-```
-
-### Testing Locally Built Images
-
-**Option 1: Docker Compose**
-```yaml
-# docker-compose-local.yml
-version: '3.8'
-services:
-  controller:
-    image: localhost:5000/aci-containers-controller:dev-20251104
-    volumes:
-      - ./controller.conf:/usr/local/etc/aci-containers/controller.conf
-    ports:
-      - "8091:8091"
-```
-
-**Option 2: Kind Cluster**
-```bash
-# Create kind cluster with local registry
-./scripts/create-kind-with-registry.sh
-
-# Load images into kind
-kind load docker-image localhost:5000/aci-containers-controller:dev-20251104
-
-# Deploy using acc-provision
-acc-provision -c input.yaml -f kubernetes-1.29 -o aci_deployment.yaml \
-  --version-token dev-20251104
-
-kubectl apply -f aci_deployment.yaml
-```
-
-### Debugging Build Issues
-
-**Enable verbose output**:
-```bash
-export DOCKER_BUILDKIT=1
-export BUILDKIT_PROGRESS=plain
-docker build --progress=plain -t myimage:test .
-```
-
-**Check intermediate layers**:
-```bash
-# Build without removing intermediate containers
-docker build --rm=false -t myimage:test .
-
-# List all containers including stopped
-docker ps -a
-
-# Commit intermediate state
-docker commit <container-id> debug-image:test
-docker run -it debug-image:test /bin/bash
-```
-
-**Common Issues**:
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| `opflex-build-base not found` | Missing base image | Build opflex first with special tag |
-| `Go build fails` | Go version mismatch | Use Go 1.25.0 exactly |
-| `iptables copy fails` | Base image not available | Pull from quay.io or build locally |
-| `Maven fails in genie` | Java version | Use Java 11 |
-| `OVS build hangs` | Docker daemon busy | Increase Docker resources |
-
----
-
-## Troubleshooting
-
-### CI/CD Pipeline Issues
-
-#### Build Not Triggered
-**Symptoms**: PR merged but no Travis build started
-
-**Checklist**:
-1. **Check Jenkins job status** - Did the freestyle job run successfully?
-2. **Check Jenkins console output** - Look for `push-git-tag.sh` execution
-3. **Verify Jenkins has access to cicd repository** - Script must be available
-4. **Check environment variables in Jenkins**:
-   - `$RELEASE_TAG` - Must be set (e.g., <Release Tag>)
-   - `$TRAVIS_TAG` - Must be set (e.g., <Release Tag>.81c2369)
-   - `$TRAVIS_TAGGER` - GitHub token must be valid
-5. **Check GitHub** - Is the tag visible? (`git ls-remote --tags`)
-6. **Check Travis dashboard** - Any webhook failures?
-
-**Common Causes**:
-- Jenkins job disabled or not configured
-- `$TRAVIS_TAGGER` token expired or invalid
-- cicd repository not accessible to Jenkins
-- Tag format doesn't match expectations in globals.sh
-- GitHub webhook to Travis CI not configured
-- Network issues between Jenkins and GitHub
-
-**Debug Commands**:
-```bash
-# From Jenkins job console, verify script execution:
-# Should see output like:
-git tag -f -a <Release Tag>.81c2369 -m "ACI Release <Release Tag> Created by Travis Job ..."
-git push travis-tagger -f --tags
-
-# Verify tag was created:
-git ls-remote --tags https://github.com/noironetworks/<repo>.git | grep <Release Tag>
-
-# Check tag message:
-git show -s --format=%B <Release Tag>.81c2369
-```
-
-#### Build Fails at Tag Validation
-**Symptoms**: Travis job exits with code 140 or fails at check-git-tag.sh
-
-**Debug**:
-```bash
-# Check tag format
-git describe --tags
-# Should match: <Release Tag>.*
-
-# Check tag message
-git show -s --format=%B <tag>
-# Should NOT contain "Created by Travis Job"
-
-# Check tag prefix in globals.sh
-grep RELEASE_TAG cicd/travis/globals.sh
-```
-
-#### Container Build Fails
-**Symptoms**: Docker build exits with error
-
-**Debug Steps**:
-```bash
-# 1. Check base image availability
-docker pull registry.access.redhat.com/ubi9/ubi:latest
-
-# 2. Check upstream images
-docker pull quay.io/noirolabs/opflex-build-base:<Release Tag>.81c2369.z
-
-# 3. Check disk space
-df -h
-docker system df
-
-# 4. Enable debug mode
-export DOCKER_BUILDKIT=1
-export BUILDKIT_PROGRESS=plain
-```
-
-#### Registry Push Fails
-**Symptoms**: Build succeeds but push fails
-
-**Common Issues**:
-- Authentication expired (check `$DOCKER_PASSWORD`, `$DOCKER_USERNAME`)
-- Rate limiting (wait and retry)
-- Network issues (check Travis network status)
-- Registry storage full (contact registry admin)
-
-**Verify Manually**:
-```bash
-# Test registry access
-docker login quay.io/noirolabs
-docker push quay.io/noirolabs/test:check
-
-# Check rate limits
-curl -I https://quay.io/v2/
-```
-
-### Local Development Issues
-
-#### Go Build Fails
-```bash
-# Verify Go version
-go version  # Should be 1.25.0
-
-# Clean module cache
-go clean -modcache
-
-# Re-download dependencies
-go mod download
-go mod verify
-
-# Check for replace directives
-grep replace go.mod
-```
-
-#### Python Package Build Fails
-```bash
-# Check Python version
-python3 --version  # Should be 3.9+
-
-# Verify setup.py
-python3 setup.py check
-
-# Install build dependencies
-pip install setuptools wheel twine
-
-# Clean build artifacts
-rm -rf build/ dist/ *.egg-info/
-```
-
-#### Maven Build Fails (Genie)
-```bash
-# Check Java version
-java -version  # Should be Java 11
-
-# Clean Maven cache
-mvn clean
-
-# Update dependencies
-mvn dependency:resolve
-
-# Build with debug
-mvn -X compile exec:java
-```
-
----
-
-## Appendix
-
-### A. Environment Variables Reference
-
-| Variable | Default | Purpose | Used By |
-|----------|---------|---------|---------|
-| `RELEASE_TAG` | <Release Tag> | Current release version | All |
-| `UPSTREAM_ID` | 81c2369 | Upstream commit ID | All |
-| `DOCKER_HUB_ID` | - | Registry prefix | Build scripts |
-| `DOCKER_TAG` | - | Image tag | Build scripts |
-| `DOCKER_BUILDKIT` | 1 | Enable BuildKit | Docker |
-| `TRAVIS_TAG` | - | Git tag that triggered build | Travis CI / Jenkins |
-| `TRAVIS_BUILD_NUMBER` | - | Travis build ID | Travis CI |
-| `TRAVIS_REPO_SLUG` | - | Repository name | Travis CI |
-| `TRAVIS_JOB_NUMBER` | - | Jenkins job number (for tag message) | Jenkins |
-| `TRAVIS_JOB_WEB_URL` | - | Jenkins job URL (for tag message) | Jenkins |
-| `TRAVIS_TAGGER` | - | GitHub token for tag creation | Jenkins |
-| `QUAY_REGISTRY` | quay.io/noirolabs | Primary registry | Push scripts |
-| `DOCKER_USERNAME` | - | Registry auth username | Travis CI |
-| `DOCKER_PASSWORD` | - | Registry auth password | Travis CI |
-
-### B. File Locations Reference
-
-| Purpose | Path | Repository |
-|---------|------|------------|
-| Travis config | `.travis.yml` | Each repo |
-| Container definitions | `docker/travis/Dockerfile-*` | aci-containers, opflex |
-| Build scripts | `docker/travis/build-*.sh` | aci-containers, opflex |
-| Global config | `cicd/travis/globals.sh` | cicd |
-| Tag validation | `cicd/travis/check-git-tag.sh` | cicd |
-| Tag creation | `cicd/travis/push-git-tag.sh` | cicd |
-| Push logic | `cicd/travis/push-images.sh` | cicd |
-| Status updates | `cicd/travis/push-to-cicd-status.sh` | cicd |
-| Version mapping | `provision/acc_provision/versions.yaml` | acc-provision |
-| Python package | `provision/setup.py` | acc-provision |
-| Operator manifest | `acc-provision-operator/watches.yaml` | acc-provision-operator |
-
-### C. Registry & Repository URLs
-
-**Container Registries**:
-- Primary: https://quay.io/organization/noirolabs
-- Mirror: https://quay.io/organization/noiro
-- Public: https://hub.docker.com/u/noiro
-
-**Source Repositories**:
-- aci-containers: https://github.com/noironetworks/aci-containers
-- opflex: https://github.com/noironetworks/opflex
-- acc-provision: https://github.com/noironetworks/acc-provision
-- acc-provision-operator: https://github.com/noironetworks/acc-provision-operator
-- cicd: https://github.com/noironetworks/cicd
-
-**Status & Documentation**:
-- Build Status: https://github.com/noironetworks/cicd-status
-- PyPI Package: https://pypi.org/project/acc-provision/
-
-**Jenkins Configuration**:
-- Jenkins freestyle jobs are configured in Jenkins UI (not in source repositories)
-- Each repository has a corresponding Jenkins job that:
-  - Monitors GitHub for merged PRs
-  - Clones the `cicd` repository
-  - Executes `cicd/travis/push-git-tag.sh <repo-name>`
-  - Requires environment variables: `$RELEASE_TAG`, `$TRAVIS_TAG`, `$TRAVIS_TAGGER`
-
-
-**For Build Issues**:
-1. Check Travis CI build logs
-2. Check Jenkins job console
-3. Review cicd-status repository for recent changes
-4. Verify mismatch between update-cve and travis builds
-
-**For Container Issues**:
-1. Check container logs: `docker logs <container>`
-2. Inspect image: `docker inspect <image>:<tag>`
-3. Verify configuration files
-4. Check Kubernetes events: `kubectl get events`
-
-### E. Release Checklist
-
-**Pre-Release**:
-
-
-**Release**:
-- [ ] Create release via acc-provision pypi
-- [ ] Jenkins creates git tags on all repositories
-- [ ] Monitor Travis builds for all repositories
-- [ ] Verify all images pushed to registries
-- [ ] Verify acc-provision published to PyPI
-- [ ] Check cicd-status updated
-
-**Post-Release**:
-- [ ] Test deployment with new image
-- [ ] Update `RELEASE_TAG` in `cicd/travis/globals.sh`
-- [ ] Update cicd release
-- [ ] Update version in `acc-provision`
-
-
-
----
+The refresh owner separately runs the refresher's actual-CLI fixtures with fake
+HTTP/Docker and temporary bare Git repositories. Hosted Linux CI results, exact
+reviewed heads and any failed checks are retained separately from local results.
+
+### 8.3 Rehearsal and activation boundary
+
+No real rehearsal has been performed for this target. A future rehearsal uses
+explicit disposable status, image and package destinations with owner-approved
+limited credentials. It verifies the effective destination before every write.
+The old smoke path or a status-branch variable alone is not a safe rehearsal:
+legacy scripts can still select production repositories or `main`.
+
+Exercise scanner outage, partial registry push, missing/invalid receipt, identical
+and conflicting package files, concurrent status writers, stale digest updates,
+and status-only repair. Preserve actual remote state and run evidence. Advancing
+aliases or partial package/image publication is forward-only; never roll it back
+to hide a failed rehearsal or production run.
+
+## 9. Reference and activation
+
+### 9.1 Supported image inventory
+
+| Image | Producer | ACC version key |
+|---|---|---|
+| `opflex-build-base` | OpFlex base | Build dependency |
+| `opflex` | OpFlex runtime | `opflex_agent_version` |
+| `aci-containers-host` | ACI | `aci_containers_host_version` |
+| `aci-containers-host-ovscni` | ACI | `aci_containers_host_ovscni_version` |
+| `aci-containers-controller` | ACI | `aci_containers_controller_version` |
+| `aci-containers-operator` | ACI | `aci_containers_operator_version` |
+| `aci-containers-webhook` | ACI | `aci_containers_webhook_version` |
+| `aci-containers-certmanager` | ACI | `aci_containers_certmanager_version` |
+| `cnideploy` | ACI | `cnideploy_version` |
+| `openvswitch` | ACI | `openvswitch_version` |
+
+### 9.2 Activation checklist
+
+1. Review and merge the intended implementation families for the selected line;
+   replace CICD placeholders with exact reviewed commits and verify every checkout.
+2. Confirm required hosted tests and the authorized signing policy without changing
+   production authority or adding a manual GitHub approval.
+3. Commit the reviewed input lock before tagging and preserve its runtime source
+   and tag-object binding. Verify image readiness and consumer promotion separately.
+4. Have owners verify Jenkins, repository variables, retired provider settings,
+   refresh configuration, notification/monitoring and all publication destinations.
+5. Complete the isolated failure/recovery rehearsal; verify owner archival and retention before artifact expiry.
+6. Activate fatal-compatible evidence first; advisory caller children remain gated
+   on deployed portal/refresher consumers and separate scan-policy approval.
+7. Verify the actual package receipt, remote status records and deployed portal
+   after publication. Update section 1 only with that observed evidence.
