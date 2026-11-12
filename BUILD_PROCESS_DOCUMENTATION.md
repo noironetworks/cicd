@@ -74,13 +74,13 @@ separately. MMR provider retirement updates the existing guard PRs in place.
 | F5 advisory callers | opflex | [#702](https://github.com/noironetworks/opflex/pull/702) | [#703](https://github.com/noironetworks/opflex/pull/703) |
 | F5 advisory callers | aci-containers | [#1805](https://github.com/noironetworks/aci-containers/pull/1805) | [#1806](https://github.com/noironetworks/aci-containers/pull/1806) |
 | B1 immutable input child | opflex | [#704](https://github.com/noironetworks/opflex/pull/704) | [#705](https://github.com/noironetworks/opflex/pull/705) |
-| B1 immutable input child | aci-containers | Public review link pending | Public review link pending |
+| B1 immutable input child | aci-containers | [#1807](https://github.com/noironetworks/aci-containers/pull/1807) | [#1808](https://github.com/noironetworks/aci-containers/pull/1808) |
 | F7 guide | cicd | Shared [#86](https://github.com/noironetworks/cicd/pull/86) | Updated in place |
 
-**Selected MMR helper pin:** [`34fb4932b027fb1776575c0918b1f9ca530b4929`](https://github.com/noironetworks/cicd/blob/34fb4932b027fb1776575c0918b1f9ca530b4929/travis/ci_evidence.py).
-**Selected Default helper pin:** [`4ad89605a5b57904392301c9c570847aae530518`](https://github.com/noironetworks/cicd/blob/4ad89605a5b57904392301c9c570847aae530518/travis/ci_evidence.py).
+**Selected MMR helper pin:** [`f3b36d2be97c9e6aff36ab7f203172b8349c0858`](https://github.com/noironetworks/cicd/blob/f3b36d2be97c9e6aff36ab7f203172b8349c0858/travis/ci_evidence.py).
+**Selected Default helper pin:** [`ad94c8acd2d5da73333993ff9dd486e6281985ab`](https://github.com/noironetworks/cicd/blob/ad94c8acd2d5da73333993ff9dd486e6281985ab/travis/ci_evidence.py).
 F1 callers retain fatal scan policy with these exact pins; advisory activation
-remains gated on deployed readers/refresher and separate approval.
+remains gated on deployed readers/refresher and separate caller PRs.
 
 ### 1.3 Capability and current limitations
 
