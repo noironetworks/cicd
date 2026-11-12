@@ -253,7 +253,9 @@ class EvidenceCLI(unittest.TestCase):
         row["sha"] = "sha256:" + "f" * 64
         metadata.write_text(json.dumps(row))
         (metadata.parent / "image-0-cve.txt").write_text("replacement evidence\n")
+        self.env["FAKE_IMAGE_ID"] = "f" * 64
         second = self.prepare(metadata, "replacement-bundle")
+        self.env.pop("FAKE_IMAGE_ID")
         self.publish(second, repo)
         self.git("pull", "--ff-only", cwd=checkout)
         artifact = self.root / "acc_provision-6.1.1.8.tar.gz"
@@ -266,6 +268,7 @@ class EvidenceCLI(unittest.TestCase):
         record = manifest["records"][0]
         self.assertIn("image-0 cve", (bundle / "artifacts/docs" / record["cve"]).read_text())
         self.assertNotIn("replacement evidence", (bundle / "artifacts/docs" / record["cve"]).read_text())
+        self.assertEqual(record["severity"][0]["H"], 1)
         before = (self.root / "tools.jsonl").read_text()
         self.publish(bundle, repo)
         self.assertEqual(before, (self.root / "tools.jsonl").read_text())

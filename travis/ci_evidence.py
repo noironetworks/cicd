@@ -39,8 +39,8 @@ class EvidenceError(RuntimeError):
 
 def clean_environment():
     # Preparation must never pass status/publishing secrets to external tools.
-    return {k: v for k, v in os.environ.items()
-            if not re.search(r"TOKEN|PASSWORD|PASSWD|PSWD|(?:^|_)PASS(?:$|_)|SECRET|TAGGER|ASKPASS", k, re.I)}
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")
+            and not re.search(r"TOKEN|PASSWORD|PASSWD|PSWD|(?:^|_)PASS(?:$|_)|SECRET|TAGGER|ASKPASS", k, re.I)}
 
 
 def run(command, *, cwd=None, env=None, timeout=TIMEOUT):
@@ -171,10 +171,14 @@ class Builder:
             shutil.rmtree(self.temp, ignore_errors=True)
 
 
-def resolve_digest(reference, observations, *, pull=True):
+def resolve_digest(reference, observations, *, pull=True, expected_image_id=None):
     env = clean_environment()
     if pull:
         run(["docker", "pull", reference], env=env)
+    if expected_image_id:
+        observed_id = run(["docker", "image", "inspect", "--format", "{{.Id}}", reference], env=env).strip()
+        if observed_id != expected_image_id:
+            raise EvidenceError("published tag resolves to a different built image ID")
     raw = run(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", reference], env=env)
     try:
         candidates = json.loads(raw)
@@ -248,8 +252,8 @@ def prepare_images(args):
             base_digest = resolve_digest(row["base_image"], builder.manifest["observations"], pull=False)
             registry_records = {"quay": [], "docker": []}
             for tag in (z_tag, dated_tag):
-                quay = resolve_digest(f"{registry}/{image}:{tag}", builder.manifest["observations"])
-                docker = resolve_digest(f"noiro/{image}:{tag}", builder.manifest["observations"])
+                quay = resolve_digest(f"{registry}/{image}:{tag}", builder.manifest["observations"], expected_image_id=row["sha"])
+                docker = resolve_digest(f"noiro/{image}:{tag}", builder.manifest["observations"], expected_image_id=row["sha"])
                 registry_records["quay"].append({"tag": tag, "sha": quay, "link": f"https://{registry}/{image}:{tag}"})
                 registry_records["docker"].append({"tag": tag, "sha": docker,
                                                    "link": f"https://hub.docker.com/layers/noiro/{image}/{tag}/images/sha256-{docker}?context=explore"})
@@ -306,6 +310,10 @@ def historical_artifacts(checkout, image, release, digest):
         # Artifact text is UTF-8 in the status repository.
         target.write_text(run(["git", "show", f"{commits[0]}:{name}"], cwd=checkout,
                               env=clean_environment()), encoding="utf-8")
+    historical_status = directory / "docs/release_artifacts/releases.yaml"
+    historical_status.parent.mkdir(parents=True, exist_ok=True)
+    historical_status.write_text(run(["git", "show", commits[0] + ":docs/release_artifacts/releases.yaml"],
+                                     cwd=checkout, env=clean_environment()), encoding="utf-8")
     return directory, directory
 
 
@@ -350,6 +358,11 @@ def prepare_package(args):
                 check_digest = quay if docker == original["docker"][0]["sha"] else "mismatch"
                 origin, cleanup = historical_artifacts(checkout, image, args.release_tag, check_digest)
                 try:
+                    if cleanup:
+                        historical = yaml.safe_load(local_file(origin, "docs/release_artifacts/releases.yaml").read_text())
+                        historical_release = next(item for item in historical["releases"] if item["release_tag"] == args.release_tag)
+                        historical_stream = next(item for item in historical_release["release_streams"] if item["release_name"] == args.release_tag + ".z")
+                        image = copy.deepcopy(next(item for item in historical_stream["container_images"] if item["name"] == name))
                     old_prefix = f"release_artifacts/{args.release_tag}/z/{name}/"
                     new_prefix = f"release_artifacts/{args.release_tag}/{directory}/{name}/"
                     for report in ("sbom", "cve", "cve-base", "buildlog"):
@@ -362,6 +375,7 @@ def prepare_package(args):
                                    "cve": new_prefix + args.release_tag + "-cve.txt",
                                    "build-logs": new_prefix + args.release_tag + "-buildlog.txt",
                                    "build-time": builder.manifest["prepared_at"]})
+                    record["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve.txt").read_text())
                     for base in record.get("base-image", []):
                         base["cve"] = new_prefix + args.release_tag + "-cve-base.txt"
                         base["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve-base.txt").read_text())
@@ -464,7 +478,8 @@ def merge_status(data, manifest):
                 stream["released"] = False
             release["release_streams"].append(stream)
     stream = next(item for item in release["release_streams"] if item["release_name"] == manifest["stream"])
-    stream["last_updated"] = manifest["prepared_at"]
+    before = copy.deepcopy(stream)
+    before.pop("last_updated", None)
     for record in manifest["records"]:
         old = next((item for item in stream["container_images"] if item.get("name") == record["name"]), None)
         if old is None:
@@ -476,6 +491,12 @@ def merge_status(data, manifest):
         stream["acc_provision"] = copy.deepcopy(manifest["package"])
         if manifest.get("released"):
             stream["released"] = True
+    after = copy.deepcopy(stream)
+    after.pop("last_updated", None)
+    if after != before:
+        # Legacy timestamps use a sortable date/time prefix. Preserve the newer
+        # observation when an earlier component result arrives after it.
+        stream["last_updated"] = max(stream.get("last_updated", ""), manifest["prepared_at"])
     return data
 
 

@@ -25,7 +25,8 @@ elif sys.argv[1] == "sbom":
 elif sys.argv[1:3] == ["image", "inspect"]:
     reference = sys.argv[-1]
     if any("{{.Id}}" in argument for argument in sys.argv):
-        print("sha256:" + "e" * 64)
+        value = "f" * 64 if os.environ.get("MISMATCH_IMAGE_ID_REF") == reference else os.environ.get("FAKE_IMAGE_ID", "e" * 64)
+        print("sha256:" + value)
     else:
         repository = reference.rsplit(":", 1)[0]
         digest = hashlib.sha256(reference.encode()).hexdigest()
