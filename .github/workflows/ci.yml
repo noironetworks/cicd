@@ -2,7 +2,7 @@ name: CI evidence tests
 on:
   pull_request:
   push:
-    branches: [master, mmr-6.1.1]
+    branches: [main, mmr-6.1.1]
 permissions:
   contents: read
 jobs:
