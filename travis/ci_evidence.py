@@ -884,6 +884,8 @@ def publish(args):
                 return
             message = f"{manifest['stream']}-{manifest['source']['repository'].split('/')[-1]}-{manifest['run']['id']}"
             message += f"\n\nCommit: {manifest['source']['sha']}"
+            message += f"\nCICD: {manifest['cicd']['sha']}"
+            message += f"\nRun: https://github.com/{manifest['source']['repository']}/actions/runs/{manifest['run']['id']}"
             for image in manifest.get("images", []):
                 # Match legacy ImageId history lookup on package promotion.
                 message += "\nImage: " + image["name"] + "\nImageId: " + image["image_id"]

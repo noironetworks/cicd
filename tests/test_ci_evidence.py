@@ -133,7 +133,11 @@ class EvidenceCLI(unittest.TestCase):
         self.assertEqual(data["custom-root"], "keep")
         self.assertEqual(len(data["releases"]), 2)
         self.assertEqual(len(data["releases"][-1]["release_streams"][0]["container_images"]), 8)
-        self.assertIn("ImageId: sha256:" + "e" * 64, self.git("--git-dir", str(repo), "log", "-1", "--format=%B"))
+        commit_log = self.git("--git-dir", str(repo), "log", "-1", "--format=%B")
+        self.assertIn("ImageId: sha256:" + "e" * 64, commit_log)
+        self.assertIn("CICD: " + manifest["cicd"]["sha"], commit_log)
+        self.assertIn("Run: https://github.com/noironetworks/aci-containers/actions/runs/123", commit_log)
+        self.assertNotIn("https://example.test/run/123", commit_log)
 
     def test_legacy_reports_prepare_without_reexecuting_scanners(self):
         env = dict(self.env, FAIL_TRIVY="1")
