@@ -150,7 +150,7 @@ def create_lock(bundle_paths, release_tag, source_branch, cicd_commit, versions_
     pins = production_pins(versions_file, release_tag)
     cohorts, images, sources, bundle_roots = {}, {}, {}, set()
     upstream_ids = set()
-    build_proof = None
+    build_proofs = {}
     for path in bundle_paths:
         path = Path(path)
         if path.resolve() in bundle_roots:
@@ -163,7 +163,7 @@ def create_lock(bundle_paths, release_tag, source_branch, cicd_commit, versions_
         source = manifest['source']; repository = source['repository']; source_sha = source['sha']
         if repository not in ('noironetworks/aci-containers', 'noironetworks/opflex') or not SHA.fullmatch(source_sha):
             raise LockError('bundle must identify a canonical runtime-image producer')
-        if repository == 'noironetworks/opflex':
+        if repository in ('noironetworks/opflex', 'noironetworks/aci-containers'):
             proofs = [item for item in manifest.get('build_inputs', []) if item.get('role') == 'opflex-build-base']
             if len(proofs) != 1:
                 raise LockError('OpFlex requires one recorded immutable build-base input')
@@ -173,9 +173,9 @@ def create_lock(bundle_paths, release_tag, source_branch, cicd_commit, versions_
                     or not DIGEST.fullmatch(str(proof.get('image_id', '')))
                     or proof.get('reference') != 'quay.io/noirolabs/opflex-build-base@' + proof['digest']):
                 raise LockError('OpFlex build-base input was not bound before the build')
-            if build_proof is not None and build_proof != proof:
-                raise LockError('OpFlex bundles contain conflicting build-base inputs')
-            build_proof = proof
+            if repository in build_proofs and build_proofs[repository] != proof:
+                raise LockError('producer bundles contain conflicting build-base inputs')
+            build_proofs[repository] = proof
         run = manifest['run']
         if any(not POSITIVE.fullmatch(str(run.get(field, ''))) for field in ('id', 'number', 'attempt')):
             raise LockError('bundle needs distinct positive API run ID, number, and attempt')
@@ -214,8 +214,8 @@ def create_lock(bundle_paths, release_tag, source_branch, cicd_commit, versions_
     locked_dependencies = dependencies(dependency_values)
     bases = [item for item in locked_dependencies
              if item['reference'].split('@', 1)[0].rsplit(':', 1)[0].endswith('/opflex-build-base')]
-    if (len(bases) != 1 or build_proof is None
-            or bases[0]['digest'] != build_proof['digest']
+    if (len(bases) != 1 or set(build_proofs) != {'noironetworks/opflex', 'noironetworks/aci-containers'}
+            or any(bases[0]['digest'] != proof['digest'] for proof in build_proofs.values())
             or bases[0]['reference'].split('@', 1)[0].rsplit(':', 1)[0] != 'quay.io/noirolabs/opflex-build-base'):
         raise LockError('approved base dependency differs from the recorded immutable build input')
     consumer_refs = {item['reference'] for entry in images.values() for item in entry['registries'].values()}
@@ -223,7 +223,7 @@ def create_lock(bundle_paths, release_tag, source_branch, cicd_commit, versions_
         raise LockError('dependency cannot duplicate a runtime consumer constraint')
     return {'schema_version': 1, 'release_tag': release_tag, 'source_branch': source_branch,
             'cicd_commit': cicd_commit, 'sources': sources,
-            'build_inputs': {'noironetworks/opflex': build_proof},
+            'build_inputs': build_proofs,
             'images': {name: images[name] for name in sorted(images)},
             'dependencies': locked_dependencies}
 
