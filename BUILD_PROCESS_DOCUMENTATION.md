@@ -77,8 +77,8 @@ separately. MMR provider retirement updates the existing guard PRs in place.
 | B1 immutable input child | aci-containers | [#1807](https://github.com/noironetworks/aci-containers/pull/1807) | [#1808](https://github.com/noironetworks/aci-containers/pull/1808) |
 | F7 guide | cicd | Shared [#86](https://github.com/noironetworks/cicd/pull/86) | Updated in place |
 
-**Selected MMR helper pin:** [`f3b36d2be97c9e6aff36ab7f203172b8349c0858`](https://github.com/noironetworks/cicd/blob/f3b36d2be97c9e6aff36ab7f203172b8349c0858/travis/ci_evidence.py).
-**Selected Default helper pin:** [`ad94c8acd2d5da73333993ff9dd486e6281985ab`](https://github.com/noironetworks/cicd/blob/ad94c8acd2d5da73333993ff9dd486e6281985ab/travis/ci_evidence.py).
+**Selected MMR helper pin:** [`ed91df64e63184ab5a5171d0705062ae57c664a7`](https://github.com/noironetworks/cicd/blob/ed91df64e63184ab5a5171d0705062ae57c664a7/travis/ci_evidence.py).
+**Selected Default helper pin:** [`ed481aacc481c16aeee26290120b7a08a8680c67`](https://github.com/noironetworks/cicd/blob/ed481aacc481c16aeee26290120b7a08a8680c67/travis/ci_evidence.py).
 F1 callers retain fatal scan policy with these exact pins; advisory activation
 remains gated on deployed readers/refresher and separate caller PRs.
 
