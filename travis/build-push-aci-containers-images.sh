@@ -49,6 +49,20 @@ if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
   OTHER_IMAGE_TAGS="${RELEASE_TAG_WITH_UPSTREAM_ID},${RELEASE_TAG_WITH_UPSTREAM_ID}.${GHA_DATE_TAG}.${TRAVIS_BUILD_NUMBER}"
 fi
 
+# Capture each actual Dockerfile base before any child build. In particular,
+# host and host-ovscni use ubi-minimal, while controller uses ubi. Pull each
+# resolved base once, then capture the same local input for every child target.
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && "${CI_EVIDENCE_MODE:-}" == "prepared-v1" ]]; then
+  BASE_IMAGES=(aci-containers-host aci-containers-host-ovscni aci-containers-controller cnideploy aci-containers-operator openvswitch aci-containers-webhook aci-containers-certmanager)
+  BASE_FILES=(host host controller cnideploy operator openvswitch webhook certmanager)
+  for ((base_index=0; base_index<${#BASE_IMAGES[@]}; base_index++)); do
+    python3 "$SCRIPTS_DIR/scan_result.py" capture-base \
+      --dockerfile "docker/travis/Dockerfile-${BASE_FILES[$base_index]}" \
+      --pull-once-file "${CI_ARTIFACT_DIR}/base-provenance/.pulled.json" \
+      --output "${CI_ARTIFACT_DIR}/base-provenance/${BASE_IMAGES[$base_index]}.json"
+  done
+fi
+
 rm -f \
   dist-static/iptables-bin.tar.gz \
   dist-static/iptables-libs.tar.gz \

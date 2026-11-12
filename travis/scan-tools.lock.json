@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "platform": "linux/amd64",
+  "source": "Official immutable GitHub release asset SHA-256 values verified 2026-11-12",
+  "tools": {
+    "grype": {"version": "0.121.3", "url": "https://github.com/anchore/grype/releases/download/v0.121.3/grype_0.121.3_linux_amd64.tar.gz", "sha256": "e9da18cc1429e786722e32161288103600efffd8e483c90761f90485bd1bec85", "binary": "grype"},
+    "syft": {"version": "1.57.1", "url": "https://github.com/anchore/syft/releases/download/v1.57.1/syft_1.57.1_linux_amd64.tar.gz", "sha256": "bf52519eb57f675d47c07d43213cb6dff6449f3d6d1147ff6701ed91f44eef0c", "binary": "syft"},
+    "trivy": {"version": "0.76.2", "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-64bit.tar.gz", "sha256": "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf", "binary": "trivy"}
+  }
+}

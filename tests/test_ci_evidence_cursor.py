@@ -111,7 +111,7 @@ class CursorRegressions(unittest.TestCase):
         artifact.write_bytes(b"retained package")
         bundle = self.root / "release"
         self.cli("prepare-package", "--artifact", artifact, "--bundle", bundle, "--mode", "release",
-                 "--version", "6.1.1.8", "--registry", "https://pypi.org/project/acc-provision", "--status-checkout", checkout, *self.common)
+                 "--version", "6.1.1.8", "--registry", "https://pypi.org/project/acc-provision/6.1.1.8/#files", "--status-checkout", checkout, *self.common)
         manifest = json.loads((bundle / "manifest.json").read_text())
         promoted = manifest["records"][0]
         self.assertEqual(promoted["base-image"][0]["severity"][0]["H"], 7)
@@ -142,7 +142,7 @@ class CursorRegressions(unittest.TestCase):
         artifact.write_bytes(b"retained immutable package")
         bundle = self.root / "release"
         self.cli("prepare-package", "--artifact", artifact, "--bundle", bundle, "--mode", "release",
-                 "--version", "6.1.1.8", "--registry", "https://pypi.org/project/acc-provision", "--status-checkout", checkout, *self.common)
+                 "--version", "6.1.1.8", "--registry", "https://pypi.org/project/acc-provision/6.1.1.8/#files", "--status-checkout", checkout, *self.common)
         self.assertEqual((bundle / "artifacts/docs/release_artifacts/6.1.1.8/r/image-0/6.1.1.8-buildlog.txt").read_bytes(), binary)
         self.publish(bundle, repo)
         self.assertNotIn(".tar.gz", self.git("--git-dir", str(repo), "ls-tree", "-r", "--name-only", "main"))

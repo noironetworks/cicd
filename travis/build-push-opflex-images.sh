@@ -72,6 +72,26 @@ else
   fi
 fi
 
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && "${CI_EVIDENCE_MODE:-}" == "prepared-v1" ]]; then
+  if [[ "${BUILD_BASE}" == true ]]; then
+    PROVENANCE_IMAGES=(opflex-build-base)
+  else
+    PROVENANCE_IMAGES=(opflex opflex-build)
+  fi
+  for IMAGE in "${PROVENANCE_IMAGES[@]}"; do
+    PROVENANCE_ARGS=(--build-arg "DOCKER_HUB_ID=${IMAGE_BUILD_REGISTRY}" --build-arg "DOCKER_TAG=${IMAGE_BUILD_TAG}")
+    if [[ "${IMAGE}" == opflex-build ]]; then
+      : "${EXPECTED_OPFLEX_BASE_DIGEST:?Expected immutable build base is required}"
+      PROVENANCE_ARGS+=(--build-arg "OPFLEX_BUILD_BASE_IMAGE=${IMAGE_BUILD_REGISTRY}/opflex-build-base@${EXPECTED_OPFLEX_BASE_DIGEST}" --expected-digest "${EXPECTED_OPFLEX_BASE_DIGEST}")
+    fi
+    python3 "$SCRIPTS_DIR/scan_result.py" capture-base \
+      --dockerfile "docker/travis/Dockerfile-${IMAGE}" \
+      --pull-once-file "${CI_ARTIFACT_DIR}/base-provenance/.pulled.json" \
+      "${PROVENANCE_ARGS[@]}" \
+      --output "${CI_ARTIFACT_DIR}/base-provenance/${IMAGE}.json"
+  done
+fi
+
 docker/travis/build-opflex-travis.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE_BUILD_TAG}"
 docker images
 

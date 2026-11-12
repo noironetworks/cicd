@@ -19,7 +19,7 @@ class RunIdentity(unittest.TestCase):
                                      "--source-sha", "a" * 40, "--trigger-tag", "6.1.1.8", "--upstream-id", "42",
                                      "--run-id", "12345678901", "--run-number", "567", "--run-attempt", "2",
                                      "--run-url", "https://example.test/run/12345678901", "--mode", "z",
-                                     "--version", "6.1.1.8.dev1", "--registry", "https://example.test/pypi"],
+                                     "--version", "6.1.1.8.dev1", "--registry", "https://test.pypi.org/project/acc-provision/6.1.1.8.dev1/#files"],
                                     text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(result.returncode, 0, result.stderr)
             run = json.loads((bundle / "manifest.json").read_text())["run"]
