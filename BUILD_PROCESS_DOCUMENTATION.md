@@ -386,13 +386,13 @@ A stale scan of image A cannot replace a newer build B. These are F4 proposals;
 the external owner must verify its deployed launcher, schedule, concurrency,
 timeouts and normal-push path before activation.
 
-### 7.4 Durable provenance
+### 7.4 Retention and archive limits
 
-Records retain source commit/tag, CICD commit, approved inputs, registry digests,
-package hash, verified receipt identity, build-time base and run URL/ID/number/
-attempt beyond the workflow artifact retention window. Owners retain the actual
-bundle, package bytes and receipt needed for repair; a portal row alone is not a
-replacement for those artifacts.
+Status Git retains release rows, component-index source/CICD/bundle-hash evidence and canonical run history.
+Package rows retain link/tag/source/build-log fields; the package SHA-256, full manifest and verified receipt do not persist there.
+Bundle/package/manifest/receipt artifacts currently have the workflow's 14-day retention.
+Owners archive and verify them before expiry when longer repair is required.
+No durable archive destination or completed archive verification is claimed here.
 
 ## 8. Recovery and validation
 
@@ -492,7 +492,7 @@ to hide a failed rehearsal or production run.
    and tag-object binding. Verify image readiness and consumer promotion separately.
 4. Have owners verify Jenkins, repository variables, retired provider settings,
    refresh configuration, notification/monitoring and all publication destinations.
-5. Complete the isolated failure/recovery rehearsal and retain remote evidence.
+5. Complete the isolated failure/recovery rehearsal; verify owner archival and retention before artifact expiry.
 6. Activate fatal-compatible evidence first; advisory caller children remain gated
    on deployed portal/refresher consumers and separate scan-policy approval.
 7. Verify the actual package receipt, remote status records and deployed portal
