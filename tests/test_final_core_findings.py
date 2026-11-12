@@ -27,6 +27,28 @@ class FinalCoreFindings(unittest.TestCase):
     bundle_and_receipt = package_fixture.PackageReceipt.bundle_and_receipt
     publish_receipt = package_fixture.PackageReceipt.publish_receipt
 
+    def decoded_counts(self, text):
+        result = self.command([sys.executable, "-B", "-c",
+                               "import json,sys; sys.path.insert(0,sys.argv[1]); import ci_evidence; "
+                               "print(json.dumps(ci_evidence.report_counts(sys.argv[2])))",
+                               str(ROOT / "travis"), text])
+        return json.loads(result.stdout)
+
+    def test_json_failure_messages_never_become_legacy_clean_results(self):
+        values = (json.dumps({"state": "error", "reason": "No vulnerabilities found"}),
+                  '{"state":"error","reason":"No vulnerabilities found"',
+                  '[{"state":"error","reason":"No vulnerabilities found"}',
+                  json.dumps("No vulnerabilities found"))
+        for text in values:
+            with self.subTest(text=text):
+                self.assertIsNone(self.decoded_counts(text))
+
+    def test_supported_legacy_zero_and_valid_json_counts_are_preserved(self):
+        self.assertEqual(self.decoded_counts("No vulnerabilities found\n"), dict.fromkeys("CHMLU", 0))
+        counts = dict.fromkeys("CHMLU", 0)
+        counts["H"] = 3
+        self.assertEqual(self.decoded_counts(json.dumps({"state": "ok", "counts": counts})), counts)
+
     def test_fatal_producer_json_counts_survive_z_to_release_and_rc(self):
         artifacts = self.root / "push-ok-image-0"
         dockerfile = self.root / "Dockerfile"

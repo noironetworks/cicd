@@ -82,7 +82,7 @@ tar -tzf dist-static/iptables-libs.tar.gz >/dev/null
 
 if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
   docker container prune --force >/dev/null
-  docker image rm "${IMAGE_BUILD_REGISTRY}/opflex-build-base:${UPSTREAM_IMAGE_Z_TAG}" >/dev/null || true
+  docker image rm "${IPTABLES_BASE_REF}" >/dev/null || true
 fi
 
 make -C . all-static

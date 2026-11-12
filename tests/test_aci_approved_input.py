@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -11,14 +12,21 @@ ROOT = evidence_fixture.ROOT
 
 
 class ACIApprovedInput(unittest.TestCase):
-    setUp = evidence_fixture.EvidenceCLI.setUp
+    def setUp(self):
+        evidence_fixture.EvidenceCLI.setUp(self)
+        self.release = re.search(r'^RELEASE_TAG="([^"]+)"', (ROOT / "travis/globals.sh").read_text(), re.M).group(1)
+        self.image_tag = self.release + ".42"
+        self.dated_tag = self.image_tag + ".111226.123"
+        self.common[self.common.index("--release-tag") + 1] = self.release
+        self.common[self.common.index("--trigger-tag") + 1] = self.release
     command = evidence_fixture.EvidenceCLI.command
     cli = evidence_fixture.EvidenceCLI.cli
     git = evidence_fixture.EvidenceCLI.git
     prepare = evidence_fixture.EvidenceCLI.prepare
 
-    def project(self, *, prepared=True, expected=True):
-        project = self.root / "aci"
+    def project(self, *, prepared=True, expected=True, complete_copy=False, case=""):
+        suffix = "-" + case if case else ""
+        project = self.root / ("aci" + suffix)
         docker = project / "docker/travis"
         docker.mkdir(parents=True)
         (project / "dist-static").mkdir()
@@ -27,18 +35,25 @@ class ACIApprovedInput(unittest.TestCase):
             (docker / ("Dockerfile-" + name)).write_text(
                 f"ARG UBI=registry.access.redhat.com/ubi9/{image}:latest\nFROM ${{UBI}}\n")
         copy_script = project / "docker/copy_iptables.sh"
-        copy_script.write_text("#!/usr/bin/env python3\nimport json,os,pathlib,sys\n"
-                               "pathlib.Path(os.environ['COPY_INPUT_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
-                               "sys.exit(77)\n")
+        copy_script.write_text("#!/usr/bin/env python3\nimport io,json,os,pathlib,sys,tarfile\n"
+                              "pathlib.Path(os.environ['COPY_INPUT_LOG']).write_text(json.dumps(sys.argv[1:]))\n" +
+                              ("destination=pathlib.Path(sys.argv[2])\n"
+                               "for name in ('iptables-bin.tar.gz','iptables-libs.tar.gz'):\n"
+                               " with tarfile.open(destination/name,'w:gz') as archive:\n"
+                               "  member=tarfile.TarInfo('fixture'); member.size=7\n"
+                               "  archive.addfile(member,io.BytesIO(b'fixture'))\n"
+                               "(destination/'iptables-wrapper-installer.sh').write_text('#!/bin/sh\\nexit 0\\n')\n"
+                               if complete_copy else "sys.exit(77)\n"))
         copy_script.chmod(0o755)
         self.git("init", str(project))
         self.git("add", ".", cwd=project)
         self.git("commit", "-m", "ACI fixture", cwd=project)
-        artifacts = self.root / "aci-artifacts"
-        env = dict(self.env, GITHUB_ACTIONS="true", GHA_TRIGGER_TAG="6.1.1.8", GHA_DATE_TAG="111226",
-                   GITHUB_REPOSITORY="noironetworks/aci-containers", GITHUB_REF="refs/tags/6.1.1.8",
-                   TRAVIS_TAG="6.1.1.8", UPSTREAM_ID="42", TRAVIS_BUILD_NUMBER="123",
+        artifacts = self.root / ("aci-artifacts" + suffix)
+        env = dict(self.env, GITHUB_ACTIONS="true", GHA_TRIGGER_TAG=self.release, GHA_DATE_TAG="111226",
+                   GITHUB_REPOSITORY="noironetworks/aci-containers", GITHUB_REF="refs/tags/" + self.release,
+                   TRAVIS_TAG=self.release, UPSTREAM_ID="42", TRAVIS_BUILD_NUMBER="123",
                    CI_ARTIFACT_DIR=str(artifacts), COPY_INPUT_LOG=str(self.root / "copy-input.json"),
+                   MAKE_INPUT_LOG=str(self.root / ("make-input" + suffix + ".json")),
                    QUAY_NOIRO_DOCKER_CONFIG=str(self.root / "quay"))
         env.pop("CI_SCAN_POLICY", None)
         env.pop("EXPECTED_OPFLEX_BASE_DIGEST", None)
@@ -47,6 +62,23 @@ class ACIApprovedInput(unittest.TestCase):
             env["CI_EVIDENCE_MODE"] = "prepared-v1"
         if expected:
             env["EXPECTED_OPFLEX_BASE_DIGEST"] = "sha256:" + "a" * 64
+        if complete_copy:
+            # This path reaches ordinary Docker build-job cleanup. Status/PyPI
+            # credentials belong to separate jobs; scanner sentinels are covered
+            # by the collector entrypoint tests.
+            for key in ("TRAVIS_TAGGER", "GITHUB_TOKEN", "GH_TOKEN", "PYPI_PASS", "TEST_PYPI_PASS"):
+                env.pop(key, None)
+            docker_tool = self.bin / "docker"
+            marker = 'else:\n    sys.exit("unexpected Docker fixture command: " + " ".join(sys.argv))'
+            cleanup = 'elif sys.argv[1:3] in (["container", "prune"], ["image", "rm"]):\n    print("fixture cleanup")\n' + marker
+            text = docker_tool.read_text()
+            self.assertIn(marker, text)
+            docker_tool.write_text(text.replace(marker, cleanup))
+            make_tool = self.bin / "make"
+            make_tool.write_text("#!/usr/bin/env python3\nimport json,os,pathlib,sys\n"
+                                 "pathlib.Path(os.environ['MAKE_INPUT_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+                                 "sys.exit(77)\n")
+            make_tool.chmod(0o755)
         return project, artifacts, env
 
     def wrapper(self, project, env):
@@ -67,7 +99,7 @@ class ACIApprovedInput(unittest.TestCase):
         self.assertEqual(proof["role"], "opflex-build-base")
         self.assertTrue(proof["immutable"])
         self.assertTrue(proof["captured_before_build"])
-        mutable = "quay.io/noirolabs/opflex-build-base:6.1.1.8.42.z"
+        mutable = "quay.io/noirolabs/opflex-build-base:" + self.image_tag + ".z"
         self.assertNotEqual("sha256:" + hashlib.sha256(mutable.encode()).hexdigest(), digest)
         calls = [json.loads(line) for line in (self.root / "tools.jsonl").read_text().splitlines()]
         self.assertFalse(any(call["tool"] == "docker" and mutable in call["args"] for call in calls))
@@ -77,7 +109,7 @@ class ACIApprovedInput(unittest.TestCase):
         result = self.wrapper(project, env)
         self.assertEqual(result.returncode, 77, result.stderr)
         self.assertEqual(json.loads((self.root / "copy-input.json").read_text())[0],
-                         "quay.io/noirolabs/opflex-build-base:6.1.1.8.42.z")
+                         "quay.io/noirolabs/opflex-build-base:" + self.image_tag + ".z")
         self.assertFalse((artifacts / "base-provenance/aci-iptables-base.json").exists())
         (self.root / "copy-input.json").unlink()
         env["CI_EVIDENCE_MODE"] = "prepared-v1"
@@ -90,7 +122,7 @@ class ACIApprovedInput(unittest.TestCase):
         self.assertEqual(self.wrapper(project, env).returncode, 77)
         for image in ("aci-containers-host", "aci-containers-controller"):
             self.command(["bash", str(ROOT / "travis/push-images.sh"), "quay.io/noirolabs", image,
-                          "6.1.1.8.42", "6.1.1.8.42,6.1.1.8.42.111226.123",
+                          self.image_tag, self.image_tag + "," + self.dated_tag,
                           "registry.access.redhat.com/ubi9/ubi:latest"], env=env)
         metadata = artifacts / "image-metadata.jsonl"
         rows = [json.loads(line) for line in metadata.read_text().splitlines()]
@@ -102,3 +134,19 @@ class ACIApprovedInput(unittest.TestCase):
         self.assertEqual(len(manifest["build_inputs"]), 1)
         self.assertEqual(manifest["build_inputs"][0]["digest"], env["EXPECTED_OPFLEX_BASE_DIGEST"])
         self.assertTrue(any(item["path"].endswith("-build-input-provenance.txt") for item in manifest["files"]))
+
+    def test_successful_extraction_cleans_the_same_prepared_or_legacy_input(self):
+        for prepared in (True, False):
+            with self.subTest(prepared=prepared):
+                case = "prepared" if prepared else "legacy"
+                project, artifacts, env = self.project(prepared=prepared, expected=prepared,
+                                                       complete_copy=True, case=case)
+                result = self.wrapper(project, env)
+                self.assertEqual(result.returncode, 77, result.stderr)
+                self.assertEqual(json.loads(Path(env["MAKE_INPUT_LOG"]).read_text()), ["-C", ".", "all-static"])
+                expected = ("quay.io/noirolabs/opflex-build-base@" + env["EXPECTED_OPFLEX_BASE_DIGEST"]
+                            if prepared else "quay.io/noirolabs/opflex-build-base:" + self.image_tag + ".z")
+                calls = [json.loads(line) for line in (self.root / "tools.jsonl").read_text().splitlines()]
+                removals = [call["args"] for call in calls if call["tool"] == "docker" and call["args"][:2] == ["image", "rm"]]
+                self.assertEqual(removals[-1], ["image", "rm", expected])
+                self.assertEqual(json.loads((self.root / "copy-input.json").read_text())[0], expected)
