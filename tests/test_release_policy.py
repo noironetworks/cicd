@@ -525,6 +525,44 @@ raise SystemExit(23)
                 self.repo, artifact, self.policy_path, self.public_key)
 
 
+    def test_runtime_constraint_cannot_be_overwritten_by_dependency(self):
+        lock = copy.deepcopy(self.lock)
+        item = copy.deepcopy(lock['images']['opflex']['registries']['quay.io/noiro'])
+        item['digest'] = 'sha256:' + 'e' * 64
+        lock['dependencies'].append(item)
+        observations = copy.deepcopy(self.observations)
+        observations['digests'][item['reference']] = item['digest']
+        with self.assertRaises(policy.PolicyError):
+            policy.validate_input_lock(lock, TAG, observations)
+
+    def test_delayed_index_visibility_after_lost_ack_is_polled(self):
+        self.preview_manifest()
+        original = policy.command
+        def child(argv, **kw):
+            if Path(argv[0]).name == 'git': return original(argv, **kw)
+            raise policy.PolicyError('simulated lost upload acknowledgement')
+        with mock.patch.object(policy, 'command', side_effect=child), \
+             mock.patch.object(policy, 'existing_package', side_effect=[False, False, True]) as lookup, \
+             mock.patch.object(policy.time, 'sleep') as wait, \
+             mock.patch.dict(os.environ, {'TWINE_USERNAME': '__token__', 'TWINE_PASSWORD': 'pypi-fixture-only'}):
+            result = policy.upload(self.manifest_path, self.dir / 'receipt.json')
+        self.assertTrue(result['verified']); self.assertEqual(lookup.call_count, 3)
+        wait.assert_called_once_with(1)
+
+    def test_preupload_remote_authorization_failure_is_never_reconciled_as_success(self):
+        self.sign(); authorization = self.authorize()
+        authorization_path = write_json(self.dir / 'authorization.json', authorization)
+        with mock.patch.object(policy, 'collect_cohort_checks', return_value=self.check_evidence()), \
+             mock.patch.object(policy, 'inspect_inputs', return_value=self.observations), \
+             mock.patch.object(policy, 'recheck', side_effect=[None, policy.PolicyError('tag moved')]), \
+             mock.patch.object(policy, 'existing_package', side_effect=[False, True]) as lookup, \
+             mock.patch.dict(os.environ, {'TWINE_USERNAME': '__token__', 'TWINE_PASSWORD': 'pypi-fixture-only'}):
+            with self.assertRaises(policy.PolicyError):
+                policy.upload(self.manifest_path, self.dir / 'receipt.json', authorization_path,
+                              self.repo, self.artifact, self.policy_path, self.public_key)
+        self.assertEqual(lookup.call_count, 1)
+        self.assertFalse((self.dir / 'receipt.json').exists())
+
     def test_upload_requeries_tests_and_registry_instead_of_trusting_prepared_authorization(self):
         self.sign(); authorization = self.authorize()
         authorization_path = write_json(self.dir / 'authorization.json', authorization)
