@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "repository": "noironetworks/acc-provision",
+  "fingerprint": "B6878A5BBF81C515428FA14E4CA0BB04A10CDFE1",
+  "email": "sumitnaiksatam@gmail.com",
+  "source_branches": [
+    "mmr-6.1.1",
+    "master"
+  ],
+  "required_tests": [
+    {
+      "workflow": "acc-provision-tag-publish.yml",
+      "jobs": [
+        "Lint and unit tests"
+      ]
+    },
+    {
+      "repository": "noironetworks/opflex",
+      "workflow": "opflex-images.yml",
+      "jobs": [
+        "OpFlex unit tests"
+      ]
+    },
+    {
+      "repository": "noironetworks/aci-containers",
+      "workflow": "aci-containers-images.yml",
+      "jobs": [
+        "aci-containers unit tests"
+      ]
+    }
+  ]
+}
