@@ -499,6 +499,16 @@ def publish(args):
         raise EvidenceError("invalid status branch")
     with tempfile.TemporaryDirectory(prefix="ci-status-") as temporary:
         temporary = Path(temporary)
+        # Freeze the verified bytes in private storage. A caller may replace its
+        # downloaded artifact directory while Git retries are still in progress.
+        frozen = temporary / "bundle"
+        frozen.mkdir()
+        (frozen / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        for destination, source in files.items():
+            target = frozen / "artifacts" / destination
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        manifest, files = validate_bundle(frozen)
         helper = temporary / "askpass.sh"
         helper.write_text('#!/bin/sh\ncase "$1" in\n*Username*) printf "%s\\n" x-access-token;;\n'
                           '*Password*) printf "%s\\n" "${TRAVIS_TAGGER:?}";;\n*) exit 1;;\nesac\n')
