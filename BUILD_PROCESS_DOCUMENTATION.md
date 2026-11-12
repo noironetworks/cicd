@@ -161,7 +161,9 @@ with a moving branch. Owners verify source-branch overrides on both lines.
 hash-validated ACI and OpFlex bundles, `versions.yaml`, and an explicit OpFlex
 build-base dependency. The lock contains the release, source branch, exact CICD
 commit, producer commits/run identities, and supported image/dependency digests.
-The owners review and commit `ci/release-inputs.json` before creating the ACC tag.
+Create image-producer tags first; owners then review and commit the lock before
+the ACC tag. The Jenkins owner verifies repository selection and stage order;
+tagging all repositories at once does not satisfy this target process.
 
 The lock excludes its enclosing ACC source SHA and tag-object ID. Including the
 hash of the commit containing the lock would be recursive. Runtime verification
