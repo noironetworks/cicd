@@ -88,8 +88,9 @@ rehearsed. Proposed filenames are plain text until reviewed source links exist.
 Public source does not establish actual Jenkins tag creation, current repository
 variables, production key availability, scanner/registry access, branch
 protection, job schedules, or deployed portal assets. Local tests do not fill
-those gaps. Notification and missed-run monitoring remain owner-operated target
-controls, not an implemented guarantee.
+those gaps. Notification and missed-run monitor building blocks remain inactive
+until owners supply the destination, ownership and thresholds. No automatic
+notification service is claimed.
 
 ## 2. Architecture and ownership
 
@@ -219,6 +220,13 @@ approved base identity, and retained evidence associates each runtime image with
 its actual build-time base. ACI host images use the minimal base, not the
 controller's full base. Missing pre-build base provenance is unavailable evidence,
 not a guessed digest.
+
+The proposed OpFlex input children pass `OPFLEX_BUILD_BASE_IMAGE` as an immutable
+`repository@digest` into `Dockerfile-opflex-build` in prepared runtime mode. The
+legacy tag remains the Dockerfile default outside that mode. The MMR phase and
+pre-Maven digest checks are preserved. The default line still requires the
+author-owned phase fix; these input children do not copy it or claim to fix that
+blocker. Shell/Docker fixtures do not establish an end-to-end real build.
 
 ### 5.2 Tag order and partial failure
 
