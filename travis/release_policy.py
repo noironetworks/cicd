@@ -114,15 +114,15 @@ def canonical_name(value):
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
-def package_manifest(artifact, name, version, index, source_sha=None, cicd_commit=None):
+def package_manifest(artifact, name, version, index, source_sha=None, cicd_commit=None, aci_source_sha=None):
     raw_path = Path(artifact)
     if raw_path.is_symlink():
         raise PolicyError("artifact symlink is not accepted")
     artifact = raw_path.resolve(strict=True)
     if index not in INDEXES or not version or not re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
         raise PolicyError("invalid package target or version")
-    if not SHA.fullmatch(str(source_sha or "")) or not SHA.fullmatch(str(cicd_commit or "")):
-        raise PolicyError("package source and CICD commits must be explicit")
+    if any(not SHA.fullmatch(str(value or "")) for value in (source_sha, cicd_commit, aci_source_sha)):
+        raise PolicyError("package, embedded binary source and CICD commits must be explicit")
     digest = file_hash(artifact)
     try:
         with tarfile.open(artifact, "r:gz") as archive:
@@ -142,7 +142,7 @@ def package_manifest(artifact, name, version, index, source_sha=None, cicd_commi
     return {"schema_version": 1, "name": canonical_name(name), "version": version,
             "index": index, "filename": artifact.name, "sha256": digest,
             "artifact": str(artifact), "size": artifact.stat().st_size,
-            "source_sha": source_sha, "cicd_commit": cicd_commit}
+            "source_sha": source_sha, "cicd_commit": cicd_commit, "aci_source_sha": aci_source_sha}
 
 
 def manifest_identity(manifest):
@@ -157,8 +157,8 @@ def validate_manifest(manifest, artifact=None):
         raise PolicyError("artifact symlink is not accepted")
     current = package_manifest(path, manifest.get("name", ""),
                                manifest.get("version", ""), manifest.get("index"),
-                               manifest.get("source_sha"), manifest.get("cicd_commit"))
-    for key in ("name", "version", "index", "filename", "sha256", "size", "source_sha", "cicd_commit"):
+                               manifest.get("source_sha"), manifest.get("cicd_commit"), manifest.get("aci_source_sha"))
+    for key in ("name", "version", "index", "filename", "sha256", "size", "source_sha", "cicd_commit", "aci_source_sha"):
         if current[key] != manifest.get(key):
             raise PolicyError(f"package manifest {key} mismatch")
     return current
@@ -518,6 +518,8 @@ def authorize(repo, tag, policy_path, public_key, lock_path, checks_path, observ
         raise PolicyError("package CICD revision does not match the signed input lock")
     if manifest["source_sha"] != identity["source_sha"]:
         raise PolicyError("package source does not match the signed release")
+    if manifest["aci_source_sha"] != lock["sources"]["noironetworks/aci-containers"]:
+        raise PolicyError("embedded binary source does not match the signed input lock")
     validate_package_pins(manifest, lock)
     return {"schema_version": 1, **identity, "package": manifest_identity(manifest),
             "public_key_sha256": file_hash(public_key), "policy_sha256": file_hash(policy_path),
@@ -585,6 +587,8 @@ def upload(manifest_path, receipt_path, authorization_path=None, repo=None, arti
             raise PolicyError("authorized dependency lock changed")
         if lock.get("cicd_commit") != git(Path(__file__).resolve().parent, "rev-parse", "HEAD"):
             raise PolicyError("recovery helper does not match the locked CICD revision")
+        if manifest["aci_source_sha"] != lock["sources"]["noironetworks/aci-containers"]:
+            raise PolicyError("embedded binary source does not match the signed input lock")
         validate_package_pins(manifest, lock)
         recheck(repo, authorization, manifest)
         # Prepared JSON is data, not an authorization credential. Re-query the
@@ -642,7 +646,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="command", required=True)
     package = subs.add_parser("package-manifest")
-    for option in ("artifact", "name", "version", "index", "source-sha", "cicd-commit", "output"):
+    for option in ("artifact", "name", "version", "index", "source-sha", "cicd-commit", "aci-source-sha", "output"):
         package.add_argument("--" + option, required=True)
     checks = subs.add_parser("collect-checks")
     for option in ("repository", "source-sha", "branch", "workflow", "output"):
@@ -666,7 +670,7 @@ def main(argv=None):
     try:
         if args.command == "package-manifest":
             write_json(args.output, package_manifest(args.artifact, args.name, args.version, args.index,
-                                                     args.source_sha, args.cicd_commit))
+                                                     args.source_sha, args.cicd_commit, args.aci_source_sha))
         elif args.command == "collect-checks":
             write_json(args.output, collect_checks(args.repository, args.source_sha, args.branch, args.workflow, args.job))
         elif args.command == "collect-cohort-checks":

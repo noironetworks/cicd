@@ -153,7 +153,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
         self.observations_path = write_json(self.dir / 'observations.json', self.observations)
         self.artifact = self.build_sdist()
         self.manifest_path = self.dir / 'manifest.json'
-        self.manifest = policy.package_manifest(self.artifact, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd)
+        self.manifest = policy.package_manifest(self.artifact, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd, 'b' * 40)
         write_json(self.manifest_path, self.manifest)
 
     def git(self, *args, input_text=None):
@@ -161,7 +161,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
 
     def cli(self, *args, success=True, env=None):
         if args[0] == 'package-manifest':
-            args = (*args, '--source-sha', self.source, '--cicd-commit', self.current_cicd)
+            args = (*args, '--source-sha', self.source, '--cicd-commit', self.current_cicd, '--aci-source-sha', 'b' * 40)
         result = run([sys.executable, SCRIPT, *args], env=env or self.env, check=False)
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
@@ -264,7 +264,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
                 data = f'Name: acc_provision\nVersion: {TAG}\n'.encode()
                 item = tarfile.TarInfo(prefix + '/PKG-INFO'); item.size = len(data)
                 archive.addfile(item, io.BytesIO(data))
-        with self.assertRaises(policy.PolicyError): policy.package_manifest(bad, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd)
+        with self.assertRaises(policy.PolicyError): policy.package_manifest(bad, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd, 'b' * 40)
 
     def test_manifest_relocation_accepts_exact_bytes_and_rejects_modified_bytes(self):
         directory = self.dir / 'relocated'; directory.mkdir()
@@ -347,11 +347,17 @@ class ReleasePolicyIntegration(unittest.TestCase):
         self.sign()
         self.authorize(success=False)
 
+    def test_authorization_rejects_embedded_binary_source_outside_signed_cohort(self):
+        manifest = {**self.manifest, 'aci_source_sha': 'f' * 40}
+        write_json(self.manifest_path, manifest)
+        self.sign()
+        self.authorize(success=False)
+
     def test_authorization_rejects_package_image_pins_different_from_locked_inputs(self):
         pins = {key: f'{TAG}.81c2369' for key in PIN_KEYS.values()}
         pins['opflex_agent_version'] = f'{TAG}.different'
         artifact = self.build_sdist(pins=pins)
-        write_json(self.manifest_path, policy.package_manifest(artifact, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd))
+        write_json(self.manifest_path, policy.package_manifest(artifact, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd, 'b' * 40))
         self.sign()
         self.authorize(success=False)
 
@@ -592,7 +598,7 @@ raise SystemExit(23)
         original = self.authorize()
         authorization_path = self.dir / 'forged-authorization.json'
         wrong_artifact = self.build_sdist(version='6.1.1.9')
-        wrong_manifest = policy.package_manifest(wrong_artifact, 'acc_provision', '6.1.1.9', 'pypi', self.source, self.current_cicd)
+        wrong_manifest = policy.package_manifest(wrong_artifact, 'acc_provision', '6.1.1.9', 'pypi', self.source, self.current_cicd, 'b' * 40)
         wrong_manifest_path = write_json(self.dir / 'wrong-version-manifest.json', wrong_manifest)
         forged = copy.deepcopy(original)
         forged['package'] = policy.manifest_identity(wrong_manifest)
