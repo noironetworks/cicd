@@ -13,8 +13,16 @@ OTHER_IMAGE_TAGS=${4//,/ }
 BASE_IMAGE=$5
 BUILT_IMAGE=${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}
 OTHER_IMAGE_TAGS="${OTHER_IMAGE_TAGS} ${IMAGE_Z_TAG}"
+GRYPE_BIN=${GRYPE_BIN:-/tmp/grype}
+SYFT_BIN=${SYFT_BIN:-/tmp/syft}
 
-if [[ ! -x /tmp/grype ]]; then
+# The child publisher has no reason to inherit the status-write credential. The
+# caller's environment is unchanged for the legacy status entrypoint afterward.
+if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  unset TRAVIS_TAGGER GITHUB_TOKEN GH_TOKEN
+fi
+
+if [[ ! -x "${GRYPE_BIN}" ]]; then
   curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /tmp
 fi
 if ! docker sbom --help >/dev/null 2>&1; then
@@ -30,10 +38,10 @@ emit_spdx_json() {
   elif docker sbom -o spdx-json "${image_ref}" >/dev/null 2>&1; then
     docker sbom -o spdx-json "${image_ref}"
   else
-    if [[ ! -x /tmp/syft ]]; then
+    if [[ ! -x "${SYFT_BIN}" ]]; then
       curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp
     fi
-    /tmp/syft "${image_ref}" -o spdx-json
+    "${SYFT_BIN}" "${image_ref}" -o spdx-json
   fi
 }
 
@@ -42,16 +50,27 @@ emit_text_sbom() {
   if docker sbom "${image_ref}" >/dev/null 2>&1; then
     docker sbom "${image_ref}"
   else
-    if [[ ! -x /tmp/syft ]]; then
+    if [[ ! -x "${SYFT_BIN}" ]]; then
       curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp
     fi
-    /tmp/syft "${image_ref}"
+    "${SYFT_BIN}" "${image_ref}"
   fi
 }
 
-emit_spdx_json "${BUILT_IMAGE}" | /tmp/grype | tee /tmp/cve.txt
+emit_spdx_json "${BUILT_IMAGE}" | "${GRYPE_BIN}" | tee /tmp/cve.txt
 emit_text_sbom "${BUILT_IMAGE}" | tee /tmp/sbom.txt
-emit_spdx_json "${BASE_IMAGE}" | /tmp/grype | tee /tmp/cve-base.txt
+emit_spdx_json "${BASE_IMAGE}" | "${GRYPE_BIN}" | tee /tmp/cve-base.txt
+
+# The next image overwrites /tmp reports. Preserve this image's evidence now,
+# even when a later push fails. Legacy Travis continues using the shared paths.
+if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  : "${CI_ARTIFACT_DIR:?CI_ARTIFACT_DIR is required}"
+  REPORT_DIR="${CI_ARTIFACT_DIR}/reports/${IMAGE}"
+  mkdir -p "${REPORT_DIR}"
+  cp /tmp/sbom.txt "${REPORT_DIR}/sbom.txt"
+  cp /tmp/cve.txt "${REPORT_DIR}/cve.txt"
+  cp /tmp/cve-base.txt "${REPORT_DIR}/cve-base.txt"
+fi
 
 # Keep the two Quay accounts separate so subsequent builds can still pull noirolabs.
 if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
@@ -86,3 +105,22 @@ for OTHER_TAG in "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${IM
   docker tag "${BUILT_IMAGE}" "${DOCKER_REGISTRY}/${IMAGE}:${OTHER_TAG}"
   docker push "${DOCKER_REGISTRY}/${IMAGE}:${OTHER_TAG}"
 done
+
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && "${IMAGE}" != "opflex-build-base" ]]; then
+  IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${BUILT_IMAGE}")
+  python3 - "${CI_ARTIFACT_DIR}/image-metadata.jsonl" "${QUAY_NOIRO_REGISTRY}" \
+    "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" \
+    "${BASE_IMAGE}" "${IMAGE_Z_TAG}" "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" <<'PY'
+import json
+import sys
+
+path, registry, image, tag, other_tags, sha, base_image, z_tag, dated_tag = sys.argv[1:]
+record = {"registry": registry, "image": image, "tag": tag,
+          "other_tags": other_tags.split(), "sha": sha.strip(), "base_image": base_image,
+          "image_z_tag": z_tag, "dated_tag": dated_tag,
+          "reports": {kind: "reports/" + image + "/" + kind + ".txt"
+                      for kind in ("sbom", "cve", "cve-base")}}
+with open(path, "a", encoding="utf-8") as stream:
+    stream.write(json.dumps(record, sort_keys=True) + "\n")
+PY
+fi
