@@ -45,7 +45,10 @@ class PromotionCLI(unittest.TestCase):
         self.expected = sha(index)
         self.lock = {"schema_version": 1, "release_tag": "6.1.1.8", "cicd_commit": helper,
                      "sources": {"noironetworks/aci-containers": "b" * 40, "noironetworks/opflex": "c" * 40},
-                     "images": {}, "dependencies": [{"reference": "quay.io/noirolabs/opflex-build-base:6.1.1.8.42.z", "digest": sha(manifest)}]}
+                     "images": {}, "dependencies": [{"reference": "quay.io/noirolabs/opflex-build-base@" + sha(manifest), "digest": sha(manifest)}]}
+        self.lock['build_inputs'] = {'noironetworks/opflex': {'role': 'opflex-build-base',
+            'reference': 'quay.io/noirolabs/opflex-build-base@' + sha(manifest),
+            'digest': sha(manifest), 'image_id': sha(config), 'captured_before_build': True, 'immutable': True}}
         sources, configs = {}, {}
         for name in NAMES:
             repo = "noironetworks/opflex" if name == "opflex" else "noironetworks/aci-containers"
