@@ -114,13 +114,15 @@ def canonical_name(value):
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
-def package_manifest(artifact, name, version, index):
+def package_manifest(artifact, name, version, index, source_sha=None, cicd_commit=None):
     raw_path = Path(artifact)
     if raw_path.is_symlink():
         raise PolicyError("artifact symlink is not accepted")
     artifact = raw_path.resolve(strict=True)
     if index not in INDEXES or not version or not re.fullmatch(r"[A-Za-z0-9_.+-]+", version):
         raise PolicyError("invalid package target or version")
+    if not SHA.fullmatch(str(source_sha or "")) or not SHA.fullmatch(str(cicd_commit or "")):
+        raise PolicyError("package source and CICD commits must be explicit")
     digest = file_hash(artifact)
     try:
         with tarfile.open(artifact, "r:gz") as archive:
@@ -139,7 +141,8 @@ def package_manifest(artifact, name, version, index):
         raise PolicyError("distribution version does not match")
     return {"schema_version": 1, "name": canonical_name(name), "version": version,
             "index": index, "filename": artifact.name, "sha256": digest,
-            "artifact": str(artifact), "size": artifact.stat().st_size}
+            "artifact": str(artifact), "size": artifact.stat().st_size,
+            "source_sha": source_sha, "cicd_commit": cicd_commit}
 
 
 def manifest_identity(manifest):
@@ -153,8 +156,9 @@ def validate_manifest(manifest, artifact=None):
     if path.is_symlink():
         raise PolicyError("artifact symlink is not accepted")
     current = package_manifest(path, manifest.get("name", ""),
-                               manifest.get("version", ""), manifest.get("index"))
-    for key in ("name", "version", "index", "filename", "sha256", "size"):
+                               manifest.get("version", ""), manifest.get("index"),
+                               manifest.get("source_sha"), manifest.get("cicd_commit"))
+    for key in ("name", "version", "index", "filename", "sha256", "size", "source_sha", "cicd_commit"):
         if current[key] != manifest.get(key):
             raise PolicyError(f"package manifest {key} mismatch")
     return current
@@ -278,6 +282,8 @@ def validate_input_lock(lock, release_tag, observations):
     actual = observations.get("digests", {})
     if any(actual.get(ref) != digest for ref, digest in expected.items()):
         raise PolicyError("required image/dependency is missing or has a different digest")
+    if any(observations.get("platforms", {}).get(ref) != "linux/amd64" for ref in expected):
+        raise PolicyError("required image/dependency platform has not been verified")
     return copy.deepcopy(lock)
 
 
@@ -359,6 +365,8 @@ def inspect_inputs(lock):
             for item in entry.get("registries", {}).values()]
     refs += [item["reference"] for item in lock.get("dependencies", [])]
     digests = {}
+    platforms = {}
+    platform_digests = {}
     for reference in refs:
         if not re.fullmatch(r"(?:quay\.io|docker\.io)/[A-Za-z0-9_./:@-]+", reference):
             raise PolicyError("only approved public registry references may be observed")
@@ -369,8 +377,27 @@ def inspect_inputs(lock):
         digest = result.get("digest", "")
         if not DIGEST.fullmatch(digest):
             raise PolicyError("registry did not return an immutable manifest digest")
+        selected = digest
+        if "manifests" in result:
+            candidates = [item for item in result["manifests"]
+                          if item.get("platform", {}).get("os") == "linux"
+                          and item.get("platform", {}).get("architecture") == "amd64"]
+            if len(candidates) != 1 or not DIGEST.fullmatch(candidates[0].get("digest", "")):
+                raise PolicyError("registry has no unambiguous linux/amd64 manifest")
+            selected = candidates[0]["digest"]
+        immutable = reference.split("@", 1)[0] + "@" + selected
+        try:
+            config = json.loads(command(["docker", "buildx", "imagetools", "inspect",
+                                         "--format", "{{json .Image}}", immutable]))
+        except ValueError as error:
+            raise PolicyError("malformed platform image configuration") from error
+        if config.get("os") != "linux" or config.get("architecture") != "amd64":
+            raise PolicyError("registry image configuration has the wrong platform")
         digests[reference] = digest
-    return {"schema_version": 1, "digests": digests}
+        platforms[reference] = "linux/amd64"
+        platform_digests[reference] = selected
+    return {"schema_version": 1, "digests": digests, "platforms": platforms,
+            "platform_digests": platform_digests}
 
 
 def committed_lock(repo, source_sha, path):
@@ -419,18 +446,20 @@ def validate_package_pins(manifest, lock):
                 raise PolicyError("retained package image pin does not match approved input lock")
 
 
-def authorize(repo, tag, policy_path, public_key, lock_path, checks_path, observations_path, manifest_path):
+def authorize_source(repo, tag, policy_path, public_key, lock_path, checks_path):
+    """Verify the existing signed-tag approval before any consumer promotion.
+
+    Registry readiness is checked separately to avoid requiring plain tags to
+    exist before the authorized promotion which creates them.
+    """
     policy = load_json(policy_path)
     identity = verify_tag(repo, tag, policy, public_key)
-    manifest = validate_manifest(load_json(manifest_path))
-    if manifest["index"] != "pypi" or manifest["version"] != tag or manifest["name"] != "acc-provision":
-        raise PolicyError("production artifact must match signed release identity")
     lock = committed_lock(repo, identity["source_sha"], lock_path)
-    validate_input_lock(lock, tag, load_json(observations_path))
+    if lock.get("release_tag") != tag or lock.get("schema_version") != 1:
+        raise PolicyError("signed input lock does not match the approved release")
     helper_commit = git(Path(__file__).resolve().parent, "rev-parse", "HEAD")
-    if lock["cicd_commit"] != helper_commit:
+    if lock.get("cicd_commit") != helper_commit:
         raise PolicyError("running CICD revision does not match the signed input lock")
-    validate_package_pins(manifest, lock)
     required = policy.get("required_tests")
     if not isinstance(required, list) or not required:
         raise PolicyError("trusted workflow policy is missing")
@@ -442,10 +471,37 @@ def authorize(repo, tag, policy_path, public_key, lock_path, checks_path, observ
     validate_checks(load_json(checks_path), identity["source_sha"], requirements)
     if identity != tag_identity(repo, tag):
         raise PolicyError("release changed while authorizing")
+    return identity, lock
+
+
+def authorize(repo, tag, policy_path, public_key, lock_path, checks_path, observations_path, manifest_path):
+    identity, lock = authorize_source(repo, tag, policy_path, public_key, lock_path, checks_path)
+    manifest = validate_manifest(load_json(manifest_path))
+    if manifest["index"] != "pypi" or manifest["version"] != tag or manifest["name"] != "acc-provision":
+        raise PolicyError("production artifact must match signed release identity")
+    validate_input_lock(lock, tag, load_json(observations_path))
+    if manifest["cicd_commit"] != lock["cicd_commit"]:
+        raise PolicyError("package CICD revision does not match the signed input lock")
+    if manifest["source_sha"] != identity["source_sha"]:
+        raise PolicyError("package source does not match the signed release")
+    validate_package_pins(manifest, lock)
     return {"schema_version": 1, **identity, "package": manifest_identity(manifest),
             "public_key_sha256": file_hash(public_key), "policy_sha256": file_hash(policy_path),
             "input_lock_sha256": file_hash(lock_path), "cicd_commit": lock["cicd_commit"],
             "checks_sha256": file_hash(checks_path), "authorized_at": int(time.time())}
+
+
+def assert_remote_tag(repo, identity):
+    """Read only: the approved tag object and peeled source must still match."""
+    current = tag_identity(repo, identity["tag"])
+    if current != {key: identity[key] for key in ("tag", "tag_object", "source_sha")}:
+        raise PolicyError("selected production tag/source changed")
+    lines = git(repo, "ls-remote", "--exit-code", "origin",
+                "refs/tags/" + identity["tag"], "refs/tags/" + identity["tag"] + "^{}")
+    remote = dict((parts[1], parts[0]) for line in lines.splitlines() if len(parts := line.split()) == 2)
+    if (remote.get("refs/tags/" + identity["tag"]) != identity["tag_object"]
+            or remote.get("refs/tags/" + identity["tag"] + "^{}") != identity["source_sha"]):
+        raise PolicyError("remote production tag/source changed")
 
 
 def recheck(repo, authorization, manifest):
@@ -453,15 +509,7 @@ def recheck(repo, authorization, manifest):
         raise PolicyError("package does not match authorized artifact")
     if manifest["name"] != "acc-provision" or manifest["version"] != authorization.get("tag") or manifest["index"] != "pypi":
         raise PolicyError("production package must match the authorized release")
-    identity = tag_identity(repo, authorization["tag"])
-    if any(identity[key] != authorization.get(key) for key in ("tag", "tag_object", "source_sha")):
-        raise PolicyError("selected production tag/source changed")
-    lines = git(repo, "-c", "credential.helper=", "ls-remote", "--exit-code", "origin",
-                "refs/tags/" + identity["tag"], "refs/tags/" + identity["tag"] + "^{}")
-    remote = dict((parts[1], parts[0]) for line in lines.splitlines() if len(parts := line.split()) == 2)
-    if (remote.get("refs/tags/" + identity["tag"]) != identity["tag_object"]
-            or remote.get("refs/tags/" + identity["tag"] + "^{}") != identity["source_sha"]):
-        raise PolicyError("remote production tag/source changed")
+    assert_remote_tag(repo, authorization)
 
 
 def existing_package(manifest):
@@ -482,6 +530,8 @@ def existing_package(manifest):
 
 def upload(manifest_path, receipt_path, authorization_path=None, repo=None, artifact=None, policy_path=None, public_key=None):
     manifest = validate_manifest(load_json(manifest_path), artifact)
+    if manifest["cicd_commit"] != git(Path(__file__).resolve().parent, "rev-parse", "HEAD"):
+        raise PolicyError("upload helper does not match the prepared CICD revision")
     authorization = None
     if manifest["index"] == "pypi":
         if not authorization_path or not repo:
@@ -535,7 +585,8 @@ def upload(manifest_path, receipt_path, authorization_path=None, repo=None, arti
             time.sleep(1)
     receipt = {"schema_version": 1, "package": manifest, "verified": True,
                "reused_existing": present, "verified_at": int(time.time()),
-               "index": INDEXES[manifest["index"]][0]}
+               "index": INDEXES[manifest["index"]][0],
+               "source_sha": manifest["source_sha"], "cicd_commit": manifest["cicd_commit"]}
     if authorization:
         receipt.update({key: authorization[key] for key in ("tag", "tag_object", "source_sha", "cicd_commit", "input_lock_sha256")})
     write_json(receipt_path, receipt)
@@ -546,7 +597,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="command", required=True)
     package = subs.add_parser("package-manifest")
-    for option in ("artifact", "name", "version", "index", "output"):
+    for option in ("artifact", "name", "version", "index", "source-sha", "cicd-commit", "output"):
         package.add_argument("--" + option, required=True)
     checks = subs.add_parser("collect-checks")
     for option in ("repository", "source-sha", "branch", "workflow", "output"):
@@ -566,7 +617,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "package-manifest":
-            write_json(args.output, package_manifest(args.artifact, args.name, args.version, args.index))
+            write_json(args.output, package_manifest(args.artifact, args.name, args.version, args.index,
+                                                     args.source_sha, args.cicd_commit))
         elif args.command == "collect-checks":
             write_json(args.output, collect_checks(args.repository, args.source_sha, args.branch, args.workflow, args.job))
         elif args.command == "inspect-inputs":

@@ -153,13 +153,15 @@ class ReleasePolicyIntegration(unittest.TestCase):
         self.observations_path = write_json(self.dir / 'observations.json', self.observations)
         self.artifact = self.build_sdist()
         self.manifest_path = self.dir / 'manifest.json'
-        self.manifest = policy.package_manifest(self.artifact, 'acc_provision', TAG, 'pypi')
+        self.manifest = policy.package_manifest(self.artifact, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd)
         write_json(self.manifest_path, self.manifest)
 
     def git(self, *args, input_text=None):
         return run(['git', '-C', self.repo, *args], env=self.env, input_text=input_text).stdout.strip()
 
     def cli(self, *args, success=True, env=None):
+        if args[0] == 'package-manifest':
+            args = (*args, '--source-sha', self.source, '--cicd-commit', self.current_cicd)
         result = run([sys.executable, SCRIPT, *args], env=env or self.env, check=False)
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
@@ -185,7 +187,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
                       'digest': 'sha256:' + 'f' * 64}
         lock['dependencies'].append(dependency)
         digests[dependency['reference']] = dependency['digest']
-        return lock, {'schema_version': 1, 'digests': digests}
+        return lock, {'schema_version': 1, 'digests': digests, 'platforms': {ref: 'linux/amd64' for ref in digests}, 'platform_digests': dict(digests)}
 
     def check_evidence(self):
         required = {'repository': REPOSITORY, 'workflow': WORKFLOW, 'branch': SOURCE_BRANCH, 'jobs': [JOB]}
@@ -257,7 +259,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
                 data = f'Name: acc_provision\nVersion: {TAG}\n'.encode()
                 item = tarfile.TarInfo(prefix + '/PKG-INFO'); item.size = len(data)
                 archive.addfile(item, io.BytesIO(data))
-        with self.assertRaises(policy.PolicyError): policy.package_manifest(bad, 'acc_provision', TAG, 'pypi')
+        with self.assertRaises(policy.PolicyError): policy.package_manifest(bad, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd)
 
     def test_manifest_relocation_accepts_exact_bytes_and_rejects_modified_bytes(self):
         directory = self.dir / 'relocated'; directory.mkdir()
@@ -344,7 +346,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
         pins = {key: f'{TAG}.81c2369' for key in PIN_KEYS.values()}
         pins['opflex_agent_version'] = f'{TAG}.different'
         artifact = self.build_sdist(pins=pins)
-        write_json(self.manifest_path, policy.package_manifest(artifact, 'acc_provision', TAG, 'pypi'))
+        write_json(self.manifest_path, policy.package_manifest(artifact, 'acc_provision', TAG, 'pypi', self.source, self.current_cicd))
         self.sign()
         self.authorize(success=False)
 
@@ -404,7 +406,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
         script = executable / 'docker'
         script.write_text('#!' + sys.executable + '\nimport json,os,sys\n'
             'with open(os.environ["FIXTURE_CAPTURE"],"a") as stream: stream.write(json.dumps({"argv":sys.argv[1:],"secret_names":[k for k in os.environ if k in ("TRAVIS_TAGGER","PYPI_PASS","TWINE_PASSWORD")]})+"\\n")\n'
-            'print(json.dumps({"digest":json.load(open(os.environ["FIXTURE_STATE"]))[sys.argv[-1]]}))\n')
+            'print(json.dumps({"os":"linux","architecture":"amd64"} if ".Image" in sys.argv[-2] else {"digest":json.load(open(os.environ["FIXTURE_STATE"]))[sys.argv[-1]]}))\n')
         script.chmod(0o755)
         env = {**self.env, 'PATH': str(executable) + os.pathsep + self.env['PATH'],
                'FIXTURE_CAPTURE': str(capture), 'FIXTURE_STATE': str(state),
@@ -413,14 +415,22 @@ class ReleasePolicyIntegration(unittest.TestCase):
         self.cli('inspect-inputs', '--lock', self.lock_path, '--output', output, env=env)
         self.assertEqual(json.loads(output.read_text()), self.observations)
         calls = [json.loads(line) for line in capture.read_text().splitlines()]
-        self.assertEqual(len(calls), 19)
+        self.assertEqual(len(calls), 38)
         self.assertTrue(all(c['argv'][:3] == ['buildx', 'imagetools', 'inspect'] and not c['secret_names'] for c in calls))
+
+    def test_registry_readiness_rejects_unverified_or_wrong_platform(self):
+        for observations in ({'schema_version': 1, 'digests': self.observations['digests']},
+                             {**self.observations, 'platforms': {ref: 'linux/arm64' for ref in self.observations['digests']}}):
+            with self.subTest(observations=observations):
+                with self.assertRaises(policy.PolicyError):
+                    policy.validate_input_lock(self.lock, TAG, observations)
 
     def test_existing_verified_package_recreates_receipt_without_credentials_build_or_upload(self):
         manifest = self.preview_manifest(); index = self.with_index(); write_json(index.state, self.index_record(manifest))
+        original_command = policy.command
         receipt = self.dir / 'receipt.json'
         with mock.patch.dict(policy.INDEXES, {'testpypi': (index.url, index.url + '/legacy/')}), \
-             mock.patch.object(policy, 'command', side_effect=AssertionError('repair must not spawn build/upload')), \
+             mock.patch.object(policy, 'command', side_effect=lambda argv, **kw: original_command(argv, **kw) if Path(argv[0]).name == 'git' else (_ for _ in ()).throw(AssertionError('repair must not build/upload'))), \
              mock.patch.dict(os.environ, {}, clear=True):
             result = policy.main(['upload', '--manifest', str(self.manifest_path), '--receipt', str(receipt)])
         self.assertEqual(result, 0)
@@ -431,6 +441,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
 
     def test_existing_package_hash_difference_or_yanked_file_prevents_upload(self):
         manifest = self.preview_manifest(); index = self.with_index()
+        original_command = policy.command
         for kind in ('hash', 'yanked', 'identity'):
             record = self.index_record(manifest)
             if kind == 'hash': record['urls'][0]['digests']['sha256'] = '0' * 64
@@ -438,7 +449,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
             else: record['info']['name'] = 'different-package'
             write_json(index.state, record)
             with self.subTest(kind=kind), mock.patch.dict(policy.INDEXES, {'testpypi': (index.url, index.url + '/legacy/')}), \
-                 mock.patch.object(policy, 'command', side_effect=AssertionError('must not upload conflicting bytes')):
+                 mock.patch.object(policy, 'command', side_effect=lambda argv, **kw: original_command(argv, **kw) if Path(argv[0]).name == 'git' else (_ for _ in ()).throw(AssertionError('must not upload conflicting bytes'))):
                 with self.assertRaises(policy.PolicyError): policy.upload(self.manifest_path, self.dir / 'receipt.json')
 
     def test_lost_upload_ack_reconciles_exact_bytes_and_child_gets_only_selected_credentials(self):
@@ -489,6 +500,28 @@ raise SystemExit(23)
             with self.assertRaises(policy.PolicyError): policy.upload(self.manifest_path, receipt, authorization_path,
                 self.repo, artifact, self.policy_path, self.public_key)
 
+
+    def test_forged_authorization_cannot_change_package_version_or_dependency_lock_hash(self):
+        self.sign()
+        original = self.authorize()
+        authorization_path = self.dir / 'forged-authorization.json'
+        wrong_artifact = self.build_sdist(version='6.1.1.9')
+        wrong_manifest = policy.package_manifest(wrong_artifact, 'acc_provision', '6.1.1.9', 'pypi', self.source, self.current_cicd)
+        wrong_manifest_path = write_json(self.dir / 'wrong-version-manifest.json', wrong_manifest)
+        forged = copy.deepcopy(original)
+        forged['package'] = policy.manifest_identity(wrong_manifest)
+        write_json(authorization_path, forged)
+        with mock.patch.object(policy, 'existing_package', side_effect=AssertionError('reject forged version before index access')):
+            with self.assertRaises(policy.PolicyError):
+                policy.upload(wrong_manifest_path, self.dir / 'wrong-version-receipt.json', authorization_path,
+                              self.repo, wrong_artifact, self.policy_path, self.public_key)
+        forged = copy.deepcopy(original)
+        forged['input_lock_sha256'] = '0' * 64
+        write_json(authorization_path, forged)
+        with mock.patch.object(policy, 'existing_package', side_effect=AssertionError('reject forged lock hash before index access')):
+            with self.assertRaises(policy.PolicyError):
+                policy.upload(self.manifest_path, self.dir / 'wrong-lock-receipt.json', authorization_path,
+                              self.repo, self.artifact, self.policy_path, self.public_key)
 
 if __name__ == '__main__':
     unittest.main()
