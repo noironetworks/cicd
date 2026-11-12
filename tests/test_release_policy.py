@@ -191,6 +191,7 @@ class ReleasePolicyIntegration(unittest.TestCase):
             'digest': dependency['digest'], 'image_id': 'sha256:' + 'e' * 64,
             'captured_before_build': True, 'immutable': True}}
 
+        lock['build_inputs']['noironetworks/aci-containers'] = copy.deepcopy(lock['build_inputs']['noironetworks/opflex'])
         digests[dependency['reference']] = dependency['digest']
         return lock, {'schema_version': 1, 'digests': digests, 'platforms': {ref: 'linux/amd64' for ref in digests}, 'platform_digests': dict(digests)}
 
@@ -552,6 +553,14 @@ raise SystemExit(23)
         with mock.patch.object(policy, 'existing_package', side_effect=AssertionError('must reject before index or upload')):
             with self.assertRaises(policy.PolicyError):
                 policy.upload(self.manifest_path, self.dir / 'receipt.json', self.dir / 'authorization.json', self.repo)
+
+    def test_cohort_requires_aci_and_opflex_to_use_the_same_approved_build_base(self):
+        for mutation in ('missing', 'mismatched'):
+            lock = copy.deepcopy(self.lock)
+            if mutation == 'missing': del lock['build_inputs']['noironetworks/aci-containers']
+            else: lock['build_inputs']['noironetworks/aci-containers']['digest'] = 'sha256:' + 'a' * 64
+            with self.assertRaises(policy.PolicyError):
+                policy.validate_input_lock(lock, TAG, self.observations)
 
     def test_runtime_constraint_cannot_be_overwritten_by_dependency(self):
         lock = copy.deepcopy(self.lock)

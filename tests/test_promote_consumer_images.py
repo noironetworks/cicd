@@ -49,6 +49,7 @@ class PromotionCLI(unittest.TestCase):
         self.lock['build_inputs'] = {'noironetworks/opflex': {'role': 'opflex-build-base',
             'reference': 'quay.io/noirolabs/opflex-build-base@' + sha(manifest),
             'digest': sha(manifest), 'image_id': sha(config), 'captured_before_build': True, 'immutable': True}}
+        self.lock['build_inputs']['noironetworks/aci-containers'] = dict(self.lock['build_inputs']['noironetworks/opflex'])
         sources, configs = {}, {}
         for name in NAMES:
             repo = "noironetworks/opflex" if name == "opflex" else "noironetworks/aci-containers"
