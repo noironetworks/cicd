@@ -8,11 +8,9 @@
 > claimed. The process chapters describe the target in present tense; section 1
 > identifies the current source and the remaining gates.
 
-**Scope:** both `mmr-6.1.1` and the default-branch pipeline. Product default
-branches are `master`; the shared `cicd` repository and `cicd-status` use `main`.
-Each line retains its own release values. At these baselines, shared globals use
-`6.1.1.8` on MMR and `6.1.2.1` on `cicd/main`; these are observations, not a request
-to change either line's version.
+**Scope:** both `mmr-6.1.1` and the default pipeline. Product defaults are `master`;
+shared `cicd` and `cicd-status` use `main`. Each line retains its release values.
+These baselines use MMR `6.1.1.8` and `cicd/main` `6.1.2.1`; neither is a requested bump.
 
 ## Contents
 
@@ -76,6 +74,7 @@ separately. MMR provider retirement updates the existing guard PRs in place.
 | F5 advisory callers | opflex | [#702](https://github.com/noironetworks/opflex/pull/702) | [#703](https://github.com/noironetworks/opflex/pull/703) |
 | F5 advisory callers | aci-containers | [#1805](https://github.com/noironetworks/aci-containers/pull/1805) | [#1806](https://github.com/noironetworks/aci-containers/pull/1806) |
 | B1 immutable input child | opflex | [#704](https://github.com/noironetworks/opflex/pull/704) | [#705](https://github.com/noironetworks/opflex/pull/705) |
+| B1 immutable input child | aci-containers | Public review link pending | Public review link pending |
 | F7 guide | cicd | Shared [#86](https://github.com/noironetworks/cicd/pull/86) | Updated in place |
 
 **Selected MMR helper pin:** [`34fb4932b027fb1776575c0918b1f9ca530b4929`](https://github.com/noironetworks/cicd/blob/34fb4932b027fb1776575c0918b1f9ca530b4929/travis/ci_evidence.py).
@@ -88,6 +87,7 @@ remains gated on deployed readers/refresher and separate approval.
 | Capability | Current evidence | Target / remaining gate |
 |---|---|---|
 | MMR tag-triggered GHA releases | Workflows exist alongside provider-selection/Travis paths | F2 removes provider selection; owner verifies external service settings |
+| ACI unit validation | [Run 43318463383](https://github.com/noironetworks/aci-containers/actions/runs/43318463383) fails in GBPserver with concurrent map writes; product/test code is unchanged | Existing product-test failure; policy checks do not establish release readiness |
 | Default-branch GHA migration | The four PR heads above are unmerged | Review both lines independently and preserve their versions |
 | Approved CICD revision | Branch-based selection remains in baseline workflows | F1 callers require an exact reviewed commit and verify checkout before credentials |
 | Image/status separation | Legacy helper runs per image; shared temporary reports can be overwritten | F1 retains each completed image's evidence and publishes a prepared bundle |
@@ -132,8 +132,7 @@ flowchart TD
   package --> upload[Upload or reconcile identical package bytes] --> receipt[Verified upload receipt] --> status[Publish retained prepared status bundle]
 ```
 
-This is the target dependency flow. It does not assert atomic publication across
-repositories or registries. Travis publication is retired in the target; a
+This target flow does not assert atomic publication across repositories or registries. Travis publication is retired in the target; a
 provider variable does not re-enable it. The retired `acc-provision-operator`
 repository has policy-test CI only, not an image producer.
 
@@ -145,6 +144,7 @@ Review these together, separately for MMR and the default line:
 
 - `travis/globals.sh`: `RELEASE_TAG`.
 - Each product repository's `UPSTREAM_ID` Actions variable and source-branch selection.
+- ACI `EXPECTED_OPFLEX_BASE_DIGEST` binds to `vars.MMR611_OPFLEX_BASE_DIGEST` on MMR and `vars.MASTER_OPFLEX_BASE_DIGEST` on default: use that line's verified OpFlex base publication, never one global value across lines.
 - ACC `provision/setup.py`: package version.
 - ACC `provision/acc_provision/versions.yaml`: consumer image pins and their classification.
 - Every caller's exact `CICD_COMMIT` pin, matching the approved helper revision and release.
