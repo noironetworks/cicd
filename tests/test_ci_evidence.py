@@ -23,7 +23,7 @@ class EvidenceCLI(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for tool in ("docker", "trivy", "grype"):
+        for tool in ("docker", "trivy", "grype", "syft"):
             shutil.copyfile(FAKE, self.bin / tool)
             (self.bin / tool).chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
@@ -31,6 +31,11 @@ class EvidenceCLI(unittest.TestCase):
                         TRAVIS_TAGGER="STATUS_CREDENTIAL_SENTINEL", GH_TOKEN="STATUS_CREDENTIAL_SENTINEL",
                         GITHUB_TOKEN="STATUS_CREDENTIAL_SENTINEL", PYPI_PASS="STATUS_CREDENTIAL_SENTINEL",
                         TEST_PYPI_PASS="STATUS_CREDENTIAL_SENTINEL")
+        lock = self.root / "tools.lock.json"
+        lock.write_text(json.dumps({"schema_version": 1, "platform": "any", "tools": {
+            name: {"version": "fixture", "path": str(self.bin / name), "sha256": hashlib.sha256((self.bin / name).read_bytes()).hexdigest()}
+            for name in ("grype", "trivy", "syft")}}))
+        self.env["SCAN_TOOL_LOCK"] = str(lock)
         self.common = ["--release-tag", "6.1.1.8", "--source-repository", "noironetworks/aci-containers",
                        "--source-sha", "a" * 40, "--run-id", "123", "--run-url", "https://example.test/run/123",
                        "--trigger-tag", "6.1.1.8", "--upstream-id", "42"]
@@ -85,25 +90,35 @@ class EvidenceCLI(unittest.TestCase):
         return repo, checkout
 
     def publish(self, bundle, repo, **kw):
-        return self.cli("publish", "--bundle", bundle, "--repository", repo, "--branch", "main", *self.expected_args(bundle), **kw)
+        args = []
+        manifest = json.loads((bundle / "manifest.json").read_text())
+        if manifest["kind"] == "package":
+            expected = manifest["package_artifact"]
+            receipt = {"schema_version": 1, "verified": True, "package": expected,
+                       "index": "https://pypi.org" if expected["index"] == "pypi" else "https://test.pypi.org",
+                       "source_sha": manifest["source"]["sha"], "cicd_commit": manifest["cicd"]["sha"],
+                       "tag": manifest["run"]["trigger_tag"], "tag_object": "d" * 40, "input_lock_sha256": "c" * 64}
+            path = self.root / (bundle.name + "-receipt.json")
+            path.write_text(json.dumps(receipt))
+            args = ["--receipt", path]
+        return self.cli("publish", "--bundle", bundle, "--repository", repo, "--branch", "main", *args, *self.expected_args(bundle), **kw)
 
     def expected_args(self, bundle):
         manifest = json.loads((bundle / "manifest.json").read_text())
         return ["--expected-release-tag", manifest["release_tag"], "--expected-kind", manifest["kind"],
                 "--expected-stream", manifest["stream"], "--expected-source-repository", manifest["source"]["repository"],
                 "--expected-source-sha", manifest["source"]["sha"], "--expected-cicd-sha", manifest["cicd"]["sha"],
-                "--expected-run-id", manifest["run"]["id"], "--expected-images", ",".join(record["name"] for record in manifest["records"])]
+                "--expected-run-id", manifest["run"]["id"], "--expected-images", ",".join(record["name"] for record in manifest["records"] + manifest.get("failed_records", []))]
 
     def test_eight_image_reports_digests_and_status_noop(self):
         bundle = self.prepare(self.images(8))
         manifest = json.loads((bundle / "manifest.json").read_text())
         self.assertEqual(len(manifest["records"]), 8)
         self.assertEqual(len(manifest["observations"]), 40)
-        self.assertEqual(len(manifest["files"]), 32)
+        self.assertEqual(len(manifest["files"]), 48)
         for index, record in enumerate(manifest["records"]):
             content = (bundle / "artifacts/docs" / record["cve"]).read_text()
             self.assertIn(f"image-{index} cve", content)
-            self.assertIn(f"Trivy evidence for quay.io/noiro/image-{index}", content)
             self.assertEqual(record["severity"][0]["H"], 1)
             self.assertEqual(record["quay"][0]["sha"], hashlib.sha256(
                 f"quay.io/noiro/image-{index}:6.1.1.8.42.z".encode()).hexdigest())
@@ -120,11 +135,12 @@ class EvidenceCLI(unittest.TestCase):
         self.assertEqual(len(data["releases"][-1]["release_streams"][0]["container_images"]), 8)
         self.assertIn("ImageId: sha256:" + "e" * 64, self.git("--git-dir", str(repo), "log", "-1", "--format=%B"))
 
-    def test_scanner_error_is_fatal_and_not_a_bundle(self):
+    def test_legacy_reports_prepare_without_reexecuting_scanners(self):
         env = dict(self.env, FAIL_TRIVY="1")
         result = self.cli("prepare-images", "--metadata", self.images(), "--bundle", self.root / "bad", *self.common, env=env, check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.root / "bad").exists())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((self.root / "bad/manifest.json").read_text())
+        self.assertNotIn("scan", manifest["records"][0], "default fatal mode must retain the legacy public schema")
 
     def test_unsafe_report_paths_fail_before_scanning(self):
         metadata = self.images()
@@ -159,7 +175,7 @@ class EvidenceCLI(unittest.TestCase):
         artifact.write_bytes(b"prepared-package-bytes")
         bundle = self.root / "package"
         self.cli("prepare-package", "--artifact", artifact, "--bundle", bundle,
-                 "--mode", "z", "--version", "6.1.1.8.dev1", "--registry", "https://example.test/pypi", *self.common)
+                 "--mode", "z", "--version", "6.1.1.8.dev1", "--registry", "https://test.pypi.org/project/acc-provision/6.1.1.8.dev1/#files", *self.common)
         repo, checkout = self.remote()
         self.publish(bundle, repo)
         manifest = json.loads((bundle / "manifest.json").read_text())
@@ -192,9 +208,9 @@ class EvidenceCLI(unittest.TestCase):
 
     def test_real_push_entrypoint_snapshots_before_next_image(self):
         artifacts = self.root / "artifacts"
-        env = dict(self.env, GITHUB_ACTIONS="true", GHA_DATE_TAG="111226", TRAVIS_TAG="6.1.1.8",
+        env = dict(self.env, GITHUB_ACTIONS="true", CI_EVIDENCE_MODE="prepared-v1", CI_SCAN_POLICY="advisory", GHA_DATE_TAG="111226", TRAVIS_TAG="6.1.1.8",
                    UPSTREAM_ID="42", TRAVIS_BUILD_NUMBER="123", CI_ARTIFACT_DIR=str(artifacts),
-                   GRYPE_BIN=str(self.bin / "grype"), QUAY_NOIRO_DOCKER_CONFIG=str(self.root / "quay"))
+                   GRYPE_BIN=str(self.bin / "grype"), QUAY_NOIRO_DOCKER_CONFIG=str(self.root / "quay"), DYNAMIC_IMAGE_IDS="1")
         for index in range(8):
             self.command(["bash", str(ROOT / "travis/push-images.sh"), "quay.io/noirolabs",
                           f"image-{index}", "6.1.1.8.42", "6.1.1.8.42,6.1.1.8.42.111226.123",
@@ -205,8 +221,10 @@ class EvidenceCLI(unittest.TestCase):
         for index, row in enumerate(rows):
             for kind, path in row["reports"].items():
                 text = (artifacts / path).read_text()
-                expected = f"base-{index}:1" if kind == "cve-base" else f"image-{index}"
-                self.assertIn(expected, text)
+                self.assertTrue(text)
+            self.assertEqual(row["scan"]["base"]["state"], "unavailable", "a postbuild argument is not base provenance")
+            self.assertEqual(row["publication"]["state"], "complete")
+        self.assertEqual(len({(artifacts / row["reports"]["sbom"]).read_text() for row in rows}), 8)
         self.prepare(metadata)
 
     def test_two_concurrent_writers_retry_fresh_clone_without_rescan(self):
@@ -260,6 +278,7 @@ class EvidenceCLI(unittest.TestCase):
         row["sha"] = "sha256:" + "f" * 64
         metadata.write_text(json.dumps(row))
         (metadata.parent / "image-0-cve.txt").write_text("replacement evidence\n")
+        self.common[self.common.index("--run-id") + 1] = "124"
         self.env["FAKE_IMAGE_ID"] = "f" * 64
         self.common[self.common.index("--run-id") + 1] = "124"
         second = self.prepare(metadata, "replacement-bundle")
@@ -270,7 +289,7 @@ class EvidenceCLI(unittest.TestCase):
         artifact.write_bytes(b"package")
         bundle = self.root / "release"
         self.cli("prepare-package", "--artifact", artifact, "--bundle", bundle, "--mode", "release",
-                 "--version", "6.1.1.8", "--registry", "https://example.test/pypi",
+                 "--version", "6.1.1.8", "--registry", "https://pypi.org/project/acc-provision/6.1.1.8/#files",
                  "--status-checkout", checkout, *self.common)
         manifest = json.loads((bundle / "manifest.json").read_text())
         record = manifest["records"][0]

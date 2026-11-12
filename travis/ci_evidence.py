@@ -21,16 +21,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import yaml
+from scan_result import observation
 
 SCHEMA_VERSION = 1
 TIMEOUT = 180
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
-REPORTS = {"sbom", "cve", "cve-base", "buildlog"}
+REPORTS = {"sbom", "cve", "cve-base", "buildlog", "scan", "trivy", "grype-image", "grype-base", "build-input", "build-input-provenance"}
 
 
 class EvidenceError(RuntimeError):
@@ -113,6 +115,36 @@ def severity(text):
              zip("CHMLU", ("Critical", "High", "Medium", "Low", "Unknown"))}]
 
 
+def legacy_counts(text):
+    if "No vulnerabilities found" in text:
+        return dict.fromkeys("CHMLU", 0)
+    lines = text.splitlines()
+    index = next((index for index, line in enumerate(lines) if "SEVERITY" in line), None)
+    if index is None:
+        return None
+    rows = []
+    for line in lines[index + 1:]:
+        if not line.strip():
+            break
+        if not re.search(r"\b(Critical|High|Medium|Low|Unknown|Negligible)\b", line):
+            return None
+        rows.append(line)
+    return severity(text)[0] if rows else None
+
+
+def validate_observation(value):
+    if not isinstance(value, dict) or value.get("state") not in ("ok", "unavailable", "queued", "unsupported", "error"):
+        raise EvidenceError("invalid scan observation state")
+    if value.get("digest") and not DIGEST.fullmatch(value["digest"]):
+        raise EvidenceError("invalid scan target digest")
+    counts = value.get("counts")
+    if value["state"] == "ok":
+        if not isinstance(counts, dict) or set(counts) != set("CHMLU") or any(type(number) is not int or number < 0 for number in counts.values()):
+            raise EvidenceError("successful scan requires complete counts")
+    elif counts is not None:
+        raise EvidenceError("failed scan may not contain current counts")
+
+
 def identity(args):
     for key in ("release_tag", "trigger_tag", "upstream_id", "run_id"):
         valid_name(getattr(args, key), key)
@@ -141,7 +173,7 @@ class Builder:
         self.manifest = {"schema_version": SCHEMA_VERSION, "kind": kind,
                          "release_tag": args.release_tag, "stream": stream,
                          "directory": directory, "prepared_at": now(),
-                         **identity(args), "records": [], "observations": [], "images": [], "files": [], "retained_files": []}
+                         **identity(args), "records": [], "failed_records": [], "observations": [], "images": [], "files": [], "retained_files": []}
 
     def retain(self, source):
         name = valid_name(Path(source).name, "retained artifact filename")
@@ -234,12 +266,13 @@ def prepare_images(args):
             registry = row["registry"]
             if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?/[A-Za-z0-9_./-]+", registry):
                 raise EvidenceError("invalid image registry")
-            for key in ("tag", "sha", "base_image", "other_tags"):
+            for key in ("tag", "base_image", "other_tags"):
                 if not row.get(key):
                     raise EvidenceError(f"missing image metadata: {key}")
-            if not DIGEST.fullmatch(row["sha"]):
+            if not row.get("publication") and not DIGEST.fullmatch(row.get("sha") or ""):
                 raise EvidenceError("image sha must be a Docker image ID")
-            builder.manifest["images"].append({"name": image, "image_id": row["sha"]})
+            if DIGEST.fullmatch(row.get("sha") or ""):
+                builder.manifest["images"].append({"name": image, "image_id": row["sha"]})
             tags = row["other_tags"]
             if isinstance(tags, str):
                 tags = tags.split(",")
@@ -257,34 +290,100 @@ def prepare_images(args):
             paths = {key: local_file(metadata.parent, value) for key, value in reports.items()}
             if "buildlog" not in paths:
                 paths["buildlog"] = generated_log(args, builder.temp)
-            prefix = f"release_artifacts/{args.release_tag}/z/{image}/{args.release_tag}"
+            scan_policy = row.get("scan_policy", "fatal")
+            failed_default = scan_policy == "fatal" and row.get("publication", {}).get("state") in ("failed", "partial")
+            prefix = f"release_artifacts/{args.release_tag}/z/{image}/"
+            if failed_default:
+                prefix += f"failures/{args.run_id}-{args.run_attempt}/"
+            prefix += args.release_tag
             grype = paths["cve"].read_text(encoding="utf-8")
-            base_digest = resolve_digest(row["base_image"], builder.manifest["observations"], pull=False)
+            scan_data = copy.deepcopy(row.get("scan") or {})
+            base_digest = scan_data.get("base", {}).get("base_repository_digest", "").removeprefix("sha256:")
             registry_records = {"quay": [], "docker": []}
-            for tag in (z_tag, dated_tag):
-                quay = resolve_digest(f"{registry}/{image}:{tag}", builder.manifest["observations"], expected_image_id=row["sha"])
-                docker = resolve_digest(f"noiro/{image}:{tag}", builder.manifest["observations"], expected_image_id=row["sha"])
-                registry_records["quay"].append({"tag": tag, "sha": quay, "link": f"https://{registry}/{image}:{tag}"})
-                registry_records["docker"].append({"tag": tag, "sha": docker,
-                                                   "link": f"https://hub.docker.com/layers/noiro/{image}/{tag}/images/sha256-{docker}?context=explore"})
-            # Actual Trivy execution occurs exactly once in token-free preparation.
+            if row.get("publication"):
+                # Receipts describe only verified attempts; never read an old
+                # alias after a partial push and report it as this build.
+                for item in row["publication"].get("references", []):
+                    if not DIGEST.fullmatch(item.get("digest", "")):
+                        raise EvidenceError("invalid publication receipt digest")
+                    builder.manifest["observations"].append({"reference": item["reference"], "digest": item["digest"]})
+                    key = item["registry"]
+                    if key in registry_records:
+                        digest = item["digest"].removeprefix("sha256:")
+                        link = (f"https://hub.docker.com/layers/noiro/{image}/{item['tag']}/images/sha256-{digest}?context=explore"
+                                if key == "docker" else "https://" + item["reference"])
+                        registry_records[key].append({"tag": item["tag"], "sha": digest, "link": link})
+                for values in registry_records.values():
+                    values.sort(key=lambda value: (value["tag"] != z_tag, value["tag"]))
+            else:
+                base_digest = resolve_digest(row["base_image"], builder.manifest["observations"], pull=False)
+                for tag in (z_tag, dated_tag):
+                    quay = resolve_digest(f"{registry}/{image}:{tag}", builder.manifest["observations"], expected_image_id=row["sha"])
+                    docker = resolve_digest(f"noiro/{image}:{tag}", builder.manifest["observations"], expected_image_id=row["sha"])
+                    registry_records["quay"].append({"tag": tag, "sha": quay, "link": f"https://{registry}/{image}:{tag}"})
+                    registry_records["docker"].append({"tag": tag, "sha": docker,
+                                                       "link": f"https://hub.docker.com/layers/noiro/{image}/{tag}/images/sha256-{docker}?context=explore"})
+            if not scan_data:
+                # Older retained text reports are visible, with no invented
+                # freshness or successful empty scan when input is absent.
+                counts = legacy_counts(grype)
+                scan_data["image"] = observation("ok" if counts is not None else "error", digest=row.get("sha"), scanner="grype-legacy",
+                                                 report=prefix + "-cve.txt", counts=counts)
+                base_text = paths["cve-base"].read_text(encoding="utf-8")
+                base_counts = legacy_counts(base_text)
+                scan_data["base"] = observation("ok" if base_counts is not None else "error", digest="sha256:" + base_digest,
+                                                scanner="grype-legacy", report=prefix + "-cve-base.txt",
+                                                counts=base_counts)
+                scan_data["trivy"] = observation("queued", reason="not-collected-by-legacy-build")
+            for target in ("image", "base"):
+                validate_observation(scan_data[target])
+            if scan_data["image"].get("digest") and scan_data["image"]["digest"] != row.get("sha"):
+                raise EvidenceError("scan observation does not match built image ID")
             combined = builder.temp / f"{image}-cve.txt"
             combined.write_text(grype, encoding="utf-8")
-            if args.source_repository.rsplit("/", 1)[-1] != "opflex":
-                trivy = run(["trivy", "image", f"{registry}/{image}@sha256:{registry_records['quay'][0]['sha']}"], env=clean_environment(), timeout=900)
-                with combined.open("a", encoding="utf-8") as stream:
-                    stream.write(trivy)
             paths["cve"] = combined
             for key, path in paths.items():
                 builder.add(path, f"docs/{prefix}-{key}.txt")
+            base_record = {"cve": prefix + "-cve-base.txt"}
+            if base_digest:
+                base_record["sha"] = base_digest
+            if scan_data["base"].get("state") == "ok":
+                base_record["severity"] = [scan_data["base"]["counts"]]
+            for target, suffix in (("image", "cve"), ("base", "cve-base")):
+                immutable = (f"release_artifacts/{args.release_tag}/z/{image}/scans/"
+                             f"{args.run_id}-{args.run_attempt}/{suffix}.txt")
+                builder.add(paths[suffix], "docs/" + immutable)
+                scan_data[target]["report"] = immutable
+                if scan_data[target].get("last_success"):
+                    scan_data[target]["last_success"]["report"] = scan_data[target]["report"]
             record = {"name": image, "commit": commit_record(args), **registry_records,
-                      "base-image": [{"sha": base_digest,
-                                      "cve": prefix + "-cve-base.txt",
-                                      "severity": severity(paths["cve-base"].read_text(encoding="utf-8"))}],
+                      "base-image": [base_record],
                       "sbom": prefix + "-sbom.txt", "cve": prefix + "-cve.txt",
                       "build-logs": prefix + "-buildlog.txt", "build-time": builder.manifest["prepared_at"],
-                      "severity": severity(grype), "severity_type": "grype"}
-            builder.manifest["records"].append(record)
+                      "severity_type": "grype"}
+            if scan_policy not in ("fatal", "advisory"):
+                raise EvidenceError("unknown scan policy in metadata")
+            if scan_policy == "advisory":
+                record["scan"] = {"build": {key: scan_data[key] for key in ("image", "base")}}
+                record["scan-tools"] = {key: value for key, value in scan_data.items() if key not in ("image", "base")}
+            if scan_data["image"].get("state") == "ok":
+                record["severity"] = [scan_data["image"]["counts"]]
+            if row.get("publication"):
+                record["publication"] = copy.deepcopy(row["publication"])
+                publication_file = builder.temp / (image + "-publication.json")
+                publication_file.write_text(json.dumps(row["publication"], sort_keys=True) + "\n")
+                builder.add(publication_file, "docs/" + prefix + "-publication.json")
+            for build_input in row.get("build_inputs", []):
+                if (build_input.get("captured_before_build") is not True or not DIGEST.fullmatch(build_input.get("digest", ""))
+                        or not DIGEST.fullmatch(build_input.get("image_id", ""))):
+                    raise EvidenceError("invalid bound build input proof")
+                if build_input not in builder.manifest.setdefault("build_inputs", []):
+                    builder.manifest["build_inputs"].append(copy.deepcopy(build_input))
+            if failed_default:
+                builder.manifest["failed_records"].append(record)
+                builder.manifest["images"] = [item for item in builder.manifest["images"] if item["name"] != image]
+            else:
+                builder.manifest["records"].append(record)
         builder.finish()
     finally:
         shutil.rmtree(builder.temp, ignore_errors=True)
@@ -327,7 +426,8 @@ def historical_artifacts(checkout, image, release, digest):
 
 
 def prepare_package(args):
-    valid_name(args.version, "package version")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", args.version):
+        raise EvidenceError("invalid package version")
     directory, stream = "z", args.release_tag + ".z"
     if args.mode == "release":
         directory, stream = "r", args.release_tag
@@ -340,6 +440,14 @@ def prepare_package(args):
         prefix = f"release_artifacts/{args.release_tag}/{directory}/acc-provision/{args.release_tag}"
         artifact = Path(args.artifact)
         valid_name(artifact.name, "package filename")
+        registry = urlsplit(args.registry)
+        index = {"pypi.org": "pypi", "test.pypi.org": "testpypi"}.get(registry.hostname)
+        if registry.scheme != "https" or registry.username or registry.password or not index:
+            raise EvidenceError("package status must reference the selected PyPI index")
+        validate_package_link(args.registry, args.version, index)
+        builder.manifest["package_artifact"] = {"name": "acc-provision", "version": args.version,
+                                                 "index": index, "filename": artifact.name,
+                                                 "sha256": digest_file(artifact), "size": artifact.stat().st_size}
         builder.retain(artifact)
         log = Path(args.build_log) if args.build_log else generated_log(args, builder.temp)
         builder.add(log, "docs/" + prefix + "-buildlog.txt")
@@ -383,13 +491,24 @@ def prepare_package(args):
                         if source.is_file():
                             builder.add(source, "docs/" + new_prefix + source.relative_to(artifact_root).as_posix())
                     record = {k: v for k, v in image.items() if not k.startswith("_")}
+                    # Refresh observations belong to the independently scheduled
+                    # target stream; promotion carries build evidence only.
+                    if isinstance(record.get("scan"), dict):
+                        record["scan"].pop("refresh", None)
                     record.update({"quay": [{"tag": tag, "sha": quay, "link": f"https://quay.io/noiro/{name}:{tag}"}],
                                    "docker": [{"tag": tag, "sha": docker, "link": f"https://hub.docker.com/layers/noiro/{name}/{tag}/images/sha256-{docker}?context=explore"}],
                                    "sbom": new_prefix + args.release_tag + "-sbom.txt",
                                    "cve": new_prefix + args.release_tag + "-cve.txt",
                                    "build-logs": new_prefix + args.release_tag + "-buildlog.txt",
                                    "build-time": builder.manifest["prepared_at"]})
-                    record["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve.txt").read_text())
+                    build_scan = record.get("scan", {}).get("build", {}).get("image", {})
+                    if build_scan:
+                        if build_scan.get("state") == "ok":
+                            record["severity"] = [build_scan["counts"]]
+                        else:
+                            record.pop("severity", None)
+                    else:
+                        record["severity"] = severity(local_file(origin, "docs/" + old_prefix + args.release_tag + "-cve.txt").read_text())
                     record["severity_type"] = "grype"
                     for field in ("cve_error", "severity_link"):
                         record.pop(field, None)
@@ -402,13 +521,32 @@ def prepare_package(args):
                     original_destination = "docs/" + new_prefix + args.release_tag + "-cve-base-original.txt"
                     if not any(item["path"] == original_destination for item in builder.manifest["files"]):
                         builder.add(original_path, original_destination)
-                    original_counts = severity(original_path.read_text(errors="replace"))[0] if "SEVERITY" in original_path.read_text(errors="replace") else None
-                    record["base-image-original"] = [{"sha": record["base-image"][0]["sha"],
-                                                        "cve": new_prefix + args.release_tag + "-cve-base-original.txt",
-                                                        "severity_type": "grype" if original_counts is not None else "unknown",
-                                                        "date-and-time": builder.manifest["prepared_at"]}]
+                    original_text = original_path.read_text(errors="replace")
+                    original_counts = legacy_counts(original_text)
+                    if original_counts is None:
+                        try:
+                            payload = json.loads(original_text)
+                            validate_observation(payload)
+                            if payload["state"] == "ok":
+                                original_counts = payload["counts"]
+                        except (ValueError, KeyError, TypeError, EvidenceError):
+                            pass
+                    original_base = {"cve": new_prefix + args.release_tag + "-cve-base-original.txt",
+                                     "severity_type": "grype" if original_counts is not None else "unknown", "date-and-time": builder.manifest["prepared_at"]}
+                    if record["base-image"][0].get("sha"):
+                        original_base["sha"] = record["base-image"][0]["sha"]
                     if original_counts is not None:
-                        record["base-image-original"][0]["severity"] = [original_counts]
+                        original_base["severity"] = [original_counts]
+                    record["base-image-original"] = [original_base]
+                    for namespace in record.get("scan", {}).values():
+                        for target in namespace.values():
+                            for field in (target, target.get("last_success", {})):
+                                if field.get("report", "").startswith(old_prefix):
+                                    original_report = field["report"]
+                                    promoted_report = new_prefix + original_report[len(old_prefix):]
+                                    if not any(item["path"] == "docs/" + promoted_report for item in builder.manifest["files"]):
+                                        builder.add(local_file(origin, "docs/" + original_report), "docs/" + promoted_report)
+                                    field["report"] = promoted_report
                     sha_path = origin / "docs" / old_prefix / (args.release_tag + "-base-image-sha.txt")
                     if sha_path.exists():
                         saved_sha = local_file(origin, "docs/" + old_prefix + args.release_tag + "-base-image-sha.txt").read_text().strip().removeprefix("sha256:")
@@ -466,7 +604,7 @@ def validate_bundle(root):
             raise EvidenceError("artifact size/hash mismatch")
         files[destination] = path
     names = set()
-    for record in manifest["records"]:
+    for record in manifest["records"] + manifest.get("failed_records", []):
         name = valid_name(record["name"], "image name")
         if name in names:
             raise EvidenceError("duplicate image record")
@@ -487,10 +625,25 @@ def validate_bundle(root):
                 valid_name(image["tag"], "image tag")
                 if not re.fullmatch(r"[0-9a-f]{64}", image["sha"]):
                     raise EvidenceError("invalid image digest")
+        for value in record.get("scan", {}).get("build", {}).values():
+            validate_observation(value)
+            for evidence in (value, value.get("last_success", {})):
+                if evidence.get("report") and "docs/" + str(relative_path(evidence["report"])) not in files:
+                    raise EvidenceError("scan observation references absent evidence")
     if manifest["kind"] == "images" and not names:
         raise EvidenceError("empty image evidence")
     if manifest["kind"] == "package":
+        expected = manifest["package_artifact"]
+        if expected.get("name") != "acc-provision" or expected.get("index") not in ("pypi", "testpypi"):
+            raise EvidenceError("invalid package artifact identity")
+        artifact_path = "retained/" + valid_name(expected["filename"], "package filename")
+        artifact = local_file(root, artifact_path)
+        if digest_file(artifact) != expected["sha256"] or artifact.stat().st_size != expected["size"]:
+            raise EvidenceError("retained package differs from prepared identity")
         for package in manifest["package"]:
+            if package["tag"] != expected["version"]:
+                raise EvidenceError("package record version mismatch")
+            validate_package_link(package["link"], expected["version"], expected["index"])
             if "docs/" + package["build-logs"] not in files:
                 raise EvidenceError("package references absent evidence")
     for observation in manifest["observations"]:
@@ -504,7 +657,7 @@ def validate_bundle(root):
         descriptor_names.add(image["name"])
         if not DIGEST.fullmatch(image["image_id"]):
             raise EvidenceError("invalid prepared image ID")
-    if manifest["kind"] == "images" and {item["name"] for item in manifest["images"]} != names:
+    if manifest["kind"] == "images" and {item["name"] for item in manifest["images"]} != {record["name"] for record in manifest["records"]}:
         raise EvidenceError("image build history does not match image records")
     retained = manifest.get("retained_files", [])
     if manifest["kind"] == "images" and retained:
@@ -535,9 +688,11 @@ def validate_expected_scope(args, manifest, files):
     if args.expected_run_attempt and manifest["run"]["attempt"] != args.expected_run_attempt:
         raise EvidenceError("bundle differs from expected producer attempt")
     allowed = {valid_name(name, "expected image") for name in args.expected_images.split(",") if name}
-    names = {record["name"] for record in manifest["records"]}
+    names = {record["name"] for record in manifest["records"] + manifest.get("failed_records", [])}
     if not names.issubset(allowed):
         raise EvidenceError("bundle contains another component's images")
+    if manifest["kind"] == "package" and manifest["directory"] != "z" and (not allowed or names != allowed):
+        raise EvidenceError("release package requires the complete promoted image cohort")
     owners = names | ({"acc-provision"} if manifest["kind"] == "package" else set())
     for path in files:
         if PurePosixPath(path).parts[4] not in owners:
@@ -596,9 +751,24 @@ def merge_status(data, manifest):
             stream["container_images"].append(copy.deepcopy(record))
         else:
             # Preserve extension fields from concurrent components and maintainers.
+            incoming = copy.deepcopy(record)
+            if "scan" in incoming:
+                scans = copy.deepcopy(old.get("scan", {}))
+                for namespace, targets in incoming["scan"].items():
+                    prior = scans.get(namespace, {})
+                    for target, value in targets.items():
+                        previous_observation = prior.get(target, {})
+                        if value.get("state") != "ok":
+                            last_success = previous_observation.get("last_success")
+                            if last_success:
+                                value["last_success"] = copy.deepcopy(last_success)
+                    scans[namespace] = targets
+                incoming["scan"] = scans
+            if incoming.get("scan", {}).get("build", {}).get("image", {}).get("state") != "ok":
+                old.pop("severity", None)
             for field in ("cve_error", "severity_link"):
                 old.pop(field, None)
-            old.update(copy.deepcopy(record))
+            old.update(incoming)
     if manifest["kind"] == "package":
         if manifest["records"]:
             # A release/RC promotion selects a complete z cohort. Components
@@ -612,8 +782,6 @@ def merge_status(data, manifest):
     after = copy.deepcopy(stream)
     after.pop("last_updated", None)
     if after != before:
-        # Legacy timestamps use a sortable date/time prefix. Preserve the newer
-        # observation when an earlier component result arrives after it.
         stream["last_updated"] = max(stream.get("last_updated", ""), manifest["prepared_at"])
     return data
 
@@ -635,6 +803,8 @@ def publish(args):
     # Full validation precedes even clone; failed bundles cannot write Git state.
     manifest, files = validate_bundle(args.bundle)
     validate_expected_scope(args, manifest, files)
+    if manifest["kind"] == "package":
+        validate_package_receipt(manifest, args.receipt)
     repository = args.repository
     if repository.startswith("https://"):
         if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", repository):
@@ -690,6 +860,8 @@ def publish(args):
             for destination, source in files.items():
                 target = safe_destination(checkout, destination)
                 target.parent.mkdir(parents=True, exist_ok=True)
+                if "/scans/" in destination and target.exists() and digest_file(target) != digest_file(source):
+                    raise EvidenceError("a run's immutable scan evidence already exists with different bytes")
                 shutil.copyfile(source, target)
             identity_path.parent.mkdir(parents=True, exist_ok=True)
             identity_path.write_text(json.dumps(identity_index, sort_keys=True, indent=2) + "\n")
@@ -715,6 +887,40 @@ def publish(args):
                     raise
                 print(f"CICD status advanced concurrently; reapplying evidence ({attempt}/3)", file=sys.stderr)
     raise EvidenceError("CICD status publication exhausted retries")
+
+
+def validate_package_receipt(manifest, path):
+    if not path:
+        raise EvidenceError("package status publication requires --receipt")
+    source = Path(path)
+    if source.is_symlink() or not source.is_file():
+        raise EvidenceError("upload receipt must be a regular file")
+    receipt = json.loads(source.read_text(encoding="utf-8"))
+    if receipt.get("schema_version") != 1 or receipt.get("verified") is not True:
+        raise EvidenceError("upload receipt must prove verified artifact identity")
+    expected = manifest["package_artifact"]
+    if not isinstance(receipt.get("package"), dict):
+        raise EvidenceError("upload receipt is missing package identity")
+    for key in ("name", "version", "index", "filename", "sha256", "size"):
+        if receipt["package"].get(key) != expected[key]:
+            raise EvidenceError("upload receipt package identity mismatch: " + key)
+    root = "https://pypi.org" if expected["index"] == "pypi" else "https://test.pypi.org"
+    if receipt.get("index") != root:
+        raise EvidenceError("upload receipt index mismatch")
+    if receipt.get("source_sha") != manifest["source"]["sha"] or receipt.get("cicd_commit") != manifest["cicd"]["sha"]:
+        raise EvidenceError("upload receipt source/CICD identity mismatch")
+    if expected["index"] == "pypi":
+        if receipt.get("tag") != manifest["run"]["trigger_tag"] or not SHA.fullmatch(receipt.get("tag_object", "")):
+            raise EvidenceError("production receipt tag identity mismatch")
+        if not re.fullmatch(r"[0-9a-f]{64}", receipt.get("input_lock_sha256", "")):
+            raise EvidenceError("production receipt is missing approved input lock identity")
+
+
+def validate_package_link(value, version, index):
+    host = "pypi.org" if index == "pypi" else "test.pypi.org"
+    expected = f"https://{host}/project/acc-provision/{version}/#files"
+    if value != expected:
+        raise EvidenceError("package index link is not the canonical name/version link")
 
 
 def parser():
@@ -746,6 +952,7 @@ def parser():
     child.add_argument("--bundle", required=True)
     child.add_argument("--repository", required=True)
     child.add_argument("--branch", required=True)
+    child.add_argument("--receipt", help="verified upload receipt, required for package bundles")
     for flag in ("release-tag", "kind", "stream", "source-repository", "source-sha", "cicd-sha", "run-id", "images"):
         child.add_argument("--expected-" + flag, required=True)
     child.add_argument("--expected-run-attempt")
