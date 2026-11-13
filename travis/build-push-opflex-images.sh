@@ -53,9 +53,13 @@ if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
       ;;
     runtime)
       BUILD_BASE=false
+      if [[ -z "${EXPECTED_OPFLEX_BASE_DIGEST:-}" ]]; then
+        echo "::error::EXPECTED_OPFLEX_BASE_DIGEST is required for runtime phase" >&2
+        exit 1
+      fi
       ;;
     *)
-      echo "GHA_OPFLEX_BUILD_PHASE must be base or runtime" >&2
+      echo "::error::GHA_OPFLEX_BUILD_PHASE must be base or runtime" >&2
       exit 1
       ;;
   esac
@@ -69,6 +73,14 @@ else
     OTHER_IMAGE_TAGS="${RELEASE_TAG_WITH_UPSTREAM_ID},${RELEASE_TAG_WITH_UPSTREAM_ID}.${DATE_TAG}.${TRAVIS_BUILD_NUMBER},${UPSTREAM_IMAGE_Z_TAG}"
   else
     BUILD_BASE=false
+  fi
+fi
+
+# Export environment variables for child script
+if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  export GHA_OPFLEX_BUILD_PHASE="${GHA_OPFLEX_BUILD_PHASE}"
+  if [[ "${BUILD_BASE}" == false ]]; then
+    export EXPECTED_OPFLEX_BASE_DIGEST="${EXPECTED_OPFLEX_BASE_DIGEST}"
   fi
 fi
 
@@ -114,7 +126,13 @@ else
   if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
     # For GitHub Actions: write metadata for separate status publication step
     IMAGES_METADATA_FILE="${CI_ARTIFACT_DIR}/opflex-images-metadata.jsonl"
-    printf '%s\n' "{\"image\":\"opflex\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
+    EVIDENCE_PATH_FILE="${CI_ARTIFACT_DIR}/.evidence-path-opflex"
+    if [[ -f "${EVIDENCE_PATH_FILE}" ]]; then
+      EVIDENCE_DIR=$(cat "${EVIDENCE_PATH_FILE}")
+      printf '%s\n' "{\"image\":\"opflex\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${BASE_IMAGE}\",\"evidence_dir\":\"${EVIDENCE_DIR}\"}" >> "$IMAGES_METADATA_FILE"
+    else
+      printf '%s\n' "{\"image\":\"opflex\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
+    fi
   else
     # For Travis: call status endpoint directly (backward compatibility)
     if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then

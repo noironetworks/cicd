@@ -13,11 +13,13 @@ if [[ ${TRAVIS_REPO_SLUG##*/} != "acc-provision" ]]; then
     OTHER_IMAGE_TAGS=$4
     IMAGE_SHA=$5
     BASE_IMAGE=$6
+    EVIDENCE_DIR="${7:-}"
 else
     PYPI_REGISTRY=$1
     TAG_NAME=$2
     IS_RELEASE=$3
     TWINE_UPLOAD=$4
+    EVIDENCE_DIR="${5:-}"
 fi
 
 GIT_REPO=${CICD_STATUS_REPO}
@@ -85,9 +87,17 @@ for attempt in 1 2 3; do
         artifact_dir="docs/release_artifacts/${RELEASE_TAG}/z/${IMAGE}"
         mkdir -p "${artifact_dir}"
         write_build_log "${artifact_dir}/${RELEASE_TAG}-buildlog.txt"
-        cp /tmp/sbom.txt "${artifact_dir}/${RELEASE_TAG}-sbom.txt"
-        cp /tmp/cve.txt "${artifact_dir}/${RELEASE_TAG}-cve.txt"
-        cp /tmp/cve-base.txt "${artifact_dir}/${RELEASE_TAG}-cve-base.txt"
+        
+        if [[ -n "${EVIDENCE_DIR}" && -d "${EVIDENCE_DIR}" ]]; then
+            [[ -f "${EVIDENCE_DIR}/sbom.txt" ]] && cp "${EVIDENCE_DIR}/sbom.txt" "${artifact_dir}/${RELEASE_TAG}-sbom.txt"
+            [[ -f "${EVIDENCE_DIR}/cve.txt" ]] && cp "${EVIDENCE_DIR}/cve.txt" "${artifact_dir}/${RELEASE_TAG}-cve.txt"
+            [[ -f "${EVIDENCE_DIR}/cve-base.txt" ]] && cp "${EVIDENCE_DIR}/cve-base.txt" "${artifact_dir}/${RELEASE_TAG}-cve-base.txt"
+        else
+            cp /tmp/sbom.txt "${artifact_dir}/${RELEASE_TAG}-sbom.txt" 2>/dev/null || true
+            cp /tmp/cve.txt "${artifact_dir}/${RELEASE_TAG}-cve.txt" 2>/dev/null || true
+            cp /tmp/cve-base.txt "${artifact_dir}/${RELEASE_TAG}-cve-base.txt" 2>/dev/null || true
+        fi
+        
         python3 "$SCRIPTS_DIR/update-release.py" "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" \
             "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${IMAGE_Z_TAG}" \
             "${TRAVIS_TAG_WITH_UPSTREAM_ID_DATE_TRAVIS_BUILD_NUMBER}" "${BASE_IMAGE}"

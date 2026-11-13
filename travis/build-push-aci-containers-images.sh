@@ -103,29 +103,27 @@ if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
 fi
 
 for IMAGE in "${ALL_IMAGES[@]}"; do
-  if [[ "${IMAGE}" != "openvswitch" ]]; then
-    $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${ACI_BASE_IMAGE}"
-    IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
-    if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
-      printf '%s\n' "{\"image\":\"${IMAGE}\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${ACI_BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
+  BASE_FOR_IMAGE="${ACI_BASE_IMAGE}"
+  if [[ "${IMAGE}" == "openvswitch" ]]; then
+    BASE_FOR_IMAGE="${OVS_BASE_IMAGE}"
+  fi
+  
+  $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${BASE_FOR_IMAGE}"
+  IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
+  
+  if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+    EVIDENCE_PATH_FILE="${CI_ARTIFACT_DIR}/.evidence-path-${IMAGE}"
+    if [[ -f "${EVIDENCE_PATH_FILE}" ]]; then
+      EVIDENCE_DIR=$(cat "${EVIDENCE_PATH_FILE}")
+      printf '%s\n' "{\"image\":\"${IMAGE}\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${BASE_FOR_IMAGE}\",\"evidence_dir\":\"${EVIDENCE_DIR}\"}" >> "$IMAGES_METADATA_FILE"
     else
-      if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
-        $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${ACI_BASE_IMAGE}" || {
-          echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
-        }
-      fi
+      printf '%s\n' "{\"image\":\"${IMAGE}\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${BASE_FOR_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
     fi
   else
-    $SCRIPTS_DIR/push-images.sh "${IMAGE_BUILD_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${OVS_BASE_IMAGE}"
-    IMAGE_SHA=$(docker image inspect --format='{{.Id}}' "${IMAGE_BUILD_REGISTRY}/${IMAGE}:${IMAGE_BUILD_TAG}")
-    if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
-      printf '%s\n' "{\"image\":\"${IMAGE}\",\"registry\":\"${QUAY_NOIRO_REGISTRY}\",\"tag\":\"${IMAGE_BUILD_TAG}\",\"other_tags\":\"${OTHER_IMAGE_TAGS}\",\"sha\":\"${IMAGE_SHA}\",\"base_image\":\"${OVS_BASE_IMAGE}\"}" >> "$IMAGES_METADATA_FILE"
-    else
-      if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
-        $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${OVS_BASE_IMAGE}" || {
-          echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
-        }
-      fi
+    if [[ "${SKIP_CICD_STATUS:-false}" != "true" ]]; then
+      $SCRIPTS_DIR/push-to-cicd-status.sh "${QUAY_NOIRO_REGISTRY}" "${IMAGE}" "${IMAGE_BUILD_TAG}" "${OTHER_IMAGE_TAGS}" "${IMAGE_SHA}" "${BASE_FOR_IMAGE}" || {
+        echo "WARNING: Failed to publish status for ${IMAGE}, but image push succeeded - continuing"
+      }
     fi
   fi
 done

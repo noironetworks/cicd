@@ -49,9 +49,22 @@ emit_text_sbom() {
   fi
 }
 
-emit_spdx_json "${BUILT_IMAGE}" | /tmp/grype | tee /tmp/cve.txt
-emit_text_sbom "${BUILT_IMAGE}" | tee /tmp/sbom.txt
-emit_spdx_json "${BASE_IMAGE}" | /tmp/grype | tee /tmp/cve-base.txt
+if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  : "${CI_ARTIFACT_DIR:?CI_ARTIFACT_DIR is required for evidence retention}"
+  
+  EVIDENCE_DIR="${CI_ARTIFACT_DIR}/evidence/${IMAGE}"
+  mkdir -p "${EVIDENCE_DIR}"
+  
+  emit_spdx_json "${BUILT_IMAGE}" | /tmp/grype | tee "${EVIDENCE_DIR}/cve.txt"
+  emit_text_sbom "${BUILT_IMAGE}" | tee "${EVIDENCE_DIR}/sbom.txt"
+  emit_spdx_json "${BASE_IMAGE}" | /tmp/grype | tee "${EVIDENCE_DIR}/cve-base.txt"
+  
+  printf '%s\n' "${EVIDENCE_DIR}" > "${CI_ARTIFACT_DIR}/.evidence-path-${IMAGE}"
+else
+  emit_spdx_json "${BUILT_IMAGE}" | /tmp/grype | tee /tmp/cve.txt
+  emit_text_sbom "${BUILT_IMAGE}" | tee /tmp/sbom.txt
+  emit_spdx_json "${BASE_IMAGE}" | /tmp/grype | tee /tmp/cve-base.txt
+fi
 
 # Keep the two Quay accounts separate so subsequent builds can still pull noirolabs.
 if [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
